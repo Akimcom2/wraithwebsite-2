@@ -46,13 +46,13 @@ if (window.innerWidth < 640) mapFrame.scrollLeft = (baseMapWidth - mapFrame.clie
 const dossier = $('#characterDialog');
 function openDossier(index) {
   const character = data.characters[index];
-  $('#dossierBody').innerHTML = `<div class="dossier-heading"><img class="dossier-portrait" src="${asset('characters', character.portrait)}" alt="Портрет: ${esc(character.name)}"><div><span class="eyebrow">ДОСЬЕ / ${String(index + 1).padStart(2, '0')}</span><h2 id="dossierName">${esc(character.name)}</h2><span class="dossier-role">${esc(character.role)}</span></div></div><div class="dossier-line"></div><h3>Что известно</h3><p>${esc(character.background)}</p><h3>Черта</h3><p>${esc(character.trait)}</p>`;
+  $('#dossierBody').innerHTML = `<div class="dossier-heading"><img class="dossier-portrait" src="${asset('characters', character.portrait)}" alt="Портрет: ${esc(character.name)}"><div><span class="eyebrow">ДОСЬЕ / ${String(index + 1).padStart(2, '0')}</span><h2 id="dossierName">${esc(character.name)}</h2><span class="dossier-role">${esc(character.role)}</span></div></div>${character.background ? `<div class="dossier-line"></div><h3>Что известно</h3><p>${esc(character.background)}</p>` : ''}${character.trait ? `<h3>Черта</h3><p>${esc(character.trait)}</p>` : ''}`;
   dossier.showModal();
   $('#closeDossier').focus();
 }
 $('#closeDossier').addEventListener('click', () => dossier.close());
 dossier.addEventListener('click', event => { if (event.target === dossier) dossier.close(); });
-$('#characterCards').innerHTML = data.characters.map((character, i) => `<button class="card character-card" type="button" data-index="${i}" aria-label="Открыть досье: ${esc(character.name)}"><span class="card-num">${String(i + 1).padStart(2, '0')} / ПЕРСОНАЖ</span><img class="card-portrait" src="${asset('characters', character.portrait)}" alt=""><h2>${esc(character.name)}</h2><span class="role">${esc(character.role)}</span><p>${esc(character.text)}</p><span class="card-action">Открыть досье ↗</span></button>`).join('');
+$('#characterCards').innerHTML = data.characters.map((character, i) => `<button class="card character-card" type="button" data-index="${i}" aria-label="Открыть досье: ${esc(character.name)}"><span class="card-num">${String(i + 1).padStart(2, '0')} / ПЕРСОНАЖ</span><img class="card-portrait" src="${asset('characters', character.portrait)}" alt=""><h2>${esc(character.name)}</h2><span class="role">${esc(character.role)}</span>${character.text ? `<p>${esc(character.text)}</p>` : ''}<span class="card-action">Открыть досье ↗</span></button>`).join('');
 $('#charactersEmpty').hidden = data.characters.length > 0;
 document.querySelectorAll('.character-card').forEach(button => button.addEventListener('click', () => openDossier(Number(button.dataset.index))));
 

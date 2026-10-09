@@ -1,6 +1,27 @@
 // Публичный журнал кампании. Сюда добавляются только события после их отыгрыша.
 window.CAMPAIGN = {
-  characters: [],
+  characters: [
+  {
+    "name": "Акакий Володцев",
+    "role": "Бизнесмен",
+    "portrait": "akakiy-volodtsev.webp"
+  },
+  {
+    "name": "Майя Ланская",
+    "role": "Подросток",
+    "portrait": "maya-lanskaya.webp"
+  },
+  {
+    "name": "Бар Барроса",
+    "role": "Пират",
+    "portrait": "bar-barrosa.webp"
+  },
+  {
+    "name": "Андрей Рожков",
+    "role": "Комик",
+    "portrait": "andrey-rozhkov.webp"
+  }
+],
   chronicle: [],
   places: [
     {name:'Северное кладбище', x:62, y:17, icon:'12_bratskoe_kladbishche.png', image:'СеверноеКладбище.webp', text:'Кладбище в северной части города. Пока известно только само место на карте.'},
