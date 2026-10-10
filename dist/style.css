@@ -22,3 +22,13 @@ dialog{border:1px solid var(--line);padding:0;background:var(--panel);color:var(
 :root[data-party=second] .portrait-frame img[src*="maya-lanskaya.png"]{width:min(100%,290px);height:100%;margin-inline:auto;object-fit:contain;clip-path:circle(47% at 50% 50%)}
 :root[data-party=second] .home-character img[src*="maya-lanskaya.png"]{width:58px;height:58px;object-fit:contain;clip-path:circle(47% at 50% 50%)}
 :root[data-party=second] .dossier-portrait[src*="maya-lanskaya.png"]{width:min(100%,420px);height:auto;aspect-ratio:1;object-fit:contain;justify-self:center;align-self:center;background:transparent;clip-path:circle(47% at 50% 50%)}
+
+.journal-player-field input{display:block;width:100%;background:var(--panel);color:var(--text);border:1px solid var(--line);margin-top:10px;padding:12px;font-size:12px}
+.journal-send{position:relative;margin:0 0 24px;padding:22px 24px;display:flex;align-items:center;justify-content:space-between;gap:24px;border:1px solid var(--line);background:var(--panel)}
+.journal-send-copy p{font-size:11px;color:var(--muted);margin-top:8px}
+.journal-send-action{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.journal-send-status{display:block;max-width:340px;font-size:10px;line-height:1.6;color:var(--muted)}
+.journal-honeypot{position:absolute!important;left:-10000px!important;top:auto!important;width:1px!important;height:1px!important;padding:0!important;opacity:0!important;pointer-events:none!important}
+#sendQuestion:disabled{opacity:.55;cursor:not-allowed}
+@media(max-width:600px){.journal-send{align-items:stretch;flex-direction:column;padding:20px}.journal-send-action{align-items:stretch;flex-direction:column}.journal-send-status{max-width:none}}
+@media print{.journal-send{display:none!important}}
