@@ -102,7 +102,21 @@ module.exports = async function submitQuestion(req, res) {
     );
     const telegramResult = await telegramResponse.json().catch(()=>({}));
     if (!telegramResponse.ok || !telegramResult.ok) {
-      return sendJson(res, 502, {ok:false, error:'Не удалось отправить вопрос. Попробуйте позже.'});
+      const telegramCode = Number(telegramResult.error_code || telegramResponse.status);
+      const description = typeof telegramResult.description === 'string'
+        ? telegramResult.description.toLowerCase()
+        : '';
+      let error = 'Telegram не принял сообщение. Проверьте chat_id и доступ бота к чату.';
+      if (telegramCode === 401) {
+        error = 'Telegram не принял токен бота. Проверьте TELEGRAM_BOT_TOKEN в Production.';
+      } else if (description.includes('chat not found') || description.includes('chat_id is empty')) {
+        error = 'Telegram не нашёл чат. Напишите боту /start и проверьте TELEGRAM_CHAT_ID в Production.';
+      } else if (description.includes('bot was blocked') || description.includes("bot can't initiate") || description.includes("bot can't send messages")) {
+        error = 'Бот не может писать в этот чат. Откройте диалог с ботом и отправьте /start либо добавьте бота в группу.';
+      } else if (telegramCode === 429) {
+        error = 'Telegram временно ограничил отправку. Подождите и попробуйте снова.';
+      }
+      return sendJson(res, 502, {ok:false, error});
     }
     return sendJson(res, 200, {ok:true});
   } catch {
