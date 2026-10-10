@@ -18,3 +18,7 @@ dialog{border:1px solid var(--line);padding:0;background:var(--panel);color:var(
 
 :root[data-party=second] .portrait-frame{padding:18px}:root[data-party=second] .portrait-frame img{object-fit:contain}:root[data-party=second] .home-character img{object-fit:contain}
 
+
+:root[data-party=second] .portrait-frame img[src*="maya-lanskaya.png"]{width:min(100%,290px);height:100%;margin-inline:auto;object-fit:contain;clip-path:circle(47% at 50% 50%)}
+:root[data-party=second] .home-character img[src*="maya-lanskaya.png"]{width:58px;height:58px;object-fit:contain;clip-path:circle(47% at 50% 50%)}
+:root[data-party=second] .dossier-portrait[src*="maya-lanskaya.png"]{width:min(100%,420px);height:auto;aspect-ratio:1;object-fit:contain;justify-self:center;align-self:center;background:transparent;clip-path:circle(47% at 50% 50%)}
