@@ -123,23 +123,91 @@
   function specializationSearch(value = '') {const q=norm(value.trim());const rows=data.specializations.filter(s=>norm(s.name+' '+s.examples.join(' ')).includes(q));$('#specializationList').innerHTML=rows.map(s=>`<article class="specialization-card"><h3>${esc(s.name)}</h3><p>${s.examples.map(esc).join(' · ')}</p></article>`).join('');$('#specializationEmpty').hidden=rows.length>0;}
   $('#specializationSearch').addEventListener('input',e=>specializationSearch(e.target.value));
 
-  let notes = read('notes',{character:'',facts:'',theories:'',questions:''});
+  let notes = read('notes',{playerName:'',character:'',facts:'',theories:'',questions:''});
   if (!notes || typeof notes !== 'object' || Array.isArray(notes)) notes = {};
   const fields = {facts:'#noteFacts',theories:'#noteTheories',questions:'#noteQuestions'};
   $('#notebookCharacter').innerHTML += data.characters.map(c=>`<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
-  function fillNotes() {$('#notebookCharacter').value = data.characters.some(c=>c.name===notes.character)?notes.character:'';for(const [k,s] of Object.entries(fields))$(s).value=typeof notes[k]==='string'?notes[k]:'';}
+  function fillNotes() {$('#notebookPlayer').value=typeof notes.playerName==='string'?notes.playerName:'';$('#notebookCharacter').value = data.characters.some(c=>c.name===notes.character)?notes.character:'';for(const [k,s] of Object.entries(fields))$(s).value=typeof notes[k]==='string'?notes[k]:'';}
   let saveTimer;
-  function saveNotes() {notes={character:$('#notebookCharacter').value,facts:$('#noteFacts').value,theories:$('#noteTheories').value,questions:$('#noteQuestions').value,updatedAt:new Date().toISOString()};const ok=write('notes',notes);$('#saveStatus').textContent=ok?'Сохранено на устройстве':'Не удалось сохранить. Скачайте копию.';return notes;}
-  Object.values(fields).forEach(s=>$(s).addEventListener('input',()=>{$('#saveStatus').textContent='Сохраняю…';clearTimeout(saveTimer);saveTimer=setTimeout(saveNotes,350);}));
+  function saveNotes() {notes={playerName:$('#notebookPlayer').value.trim(),character:$('#notebookCharacter').value,facts:$('#noteFacts').value,theories:$('#noteTheories').value,questions:$('#noteQuestions').value,updatedAt:new Date().toISOString()};const ok=write('notes',notes);$('#saveStatus').textContent=ok?'Сохранено на устройстве':'Не удалось сохранить. Скачайте копию.';return notes;}
+  Object.values(fields).concat('#notebookPlayer').forEach(s=>$(s).addEventListener('input',()=>{$('#saveStatus').textContent='Сохраняю…';clearTimeout(saveTimer);saveTimer=setTimeout(saveNotes,350);}));
   $('#notebookCharacter').addEventListener('change',saveNotes);
   window.addEventListener('pagehide',saveNotes);
+
+  let journalDeliveryReady = false;
+  let journalSending = false;
+  const sendQuestionButton = $('#sendQuestion');
+  const journalSendStatus = $('#journalSendStatus');
+  async function checkJournalDelivery() {
+    try {
+      const response = await fetch('/api/submit-question', {cache:'no-store'});
+      const result = await response.json();
+      journalDeliveryReady = response.ok && result.enabled === true;
+      sendQuestionButton.disabled = !journalDeliveryReady;
+      journalSendStatus.textContent = journalDeliveryReady
+        ? 'Подключение готово. Мастеру отправятся имя, персонаж и вопрос.'
+        : 'Отправка пока не подключена мастером.';
+    } catch {
+      journalDeliveryReady = false;
+      sendQuestionButton.disabled = true;
+      journalSendStatus.textContent = 'Не удалось проверить подключение. Попробуйте позже.';
+    }
+  }
+  sendQuestionButton.addEventListener('click', async () => {
+    if (!journalDeliveryReady || journalSending) return;
+    const n = saveNotes();
+    if (!n.playerName) {
+      journalSendStatus.textContent = 'Укажите имя игрока.';
+      $('#notebookPlayer').focus();
+      return;
+    }
+    if (!n.character) {
+      journalSendStatus.textContent = 'Выберите персонажа.';
+      $('#notebookCharacter').focus();
+      return;
+    }
+    const question = n.questions.trim();
+    if (!question) {
+      journalSendStatus.textContent = 'Сначала напишите вопрос мастеру.';
+      $('#noteQuestions').focus();
+      return;
+    }
+    journalSending = true;
+    sendQuestionButton.disabled = true;
+    journalSendStatus.textContent = 'Отправляю вопрос мастеру…';
+    try {
+      const response = await fetch('/api/submit-question', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          party:data.party.label,
+          player:n.playerName,
+          character:n.character,
+          question,
+          website:$('#journalTrap').value
+        })
+      });
+      const result = await response.json().catch(()=>({}));
+      if (!response.ok || !result.ok) {
+        if (response.status === 503) journalDeliveryReady = false;
+        throw new Error(result.error || 'Не удалось отправить вопрос. Попробуйте позже.');
+      }
+      journalSendStatus.textContent = 'Вопрос отправлен мастеру. Он остался в блокноте.';
+    } catch (error) {
+      journalSendStatus.textContent = error.message || 'Не удалось отправить вопрос. Попробуйте позже.';
+    } finally {
+      journalSending = false;
+      sendQuestionButton.disabled = !journalDeliveryReady;
+    }
+  });
+  checkJournalDelivery();
   function download(name,content,type) {const url=URL.createObjectURL(new Blob([content],{type}));const a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}
-  $('#exportNotes').addEventListener('click',()=>{const n=saveNotes();const md='# Зеркалье · '+data.party.label+'\n\nПерсонаж: '+(n.character||'не выбран')+'\n\n## Что я заметил\n\n'+n.facts+'\n\n## Мои версии\n\n'+n.theories+'\n\n## Спросить мастера\n\n'+n.questions+'\n';download('zerkalie-'+data.party.id+'-notes.md',md,'text/markdown;charset=utf-8');});
+  $('#exportNotes').addEventListener('click',()=>{const n=saveNotes();const md='# Зеркалье · '+data.party.label+'\n\nИгрок: '+(n.playerName||'не указано')+'\n\nПерсонаж: '+(n.character||'не выбран')+'\n\n## Что я заметил\n\n'+n.facts+'\n\n## Мои версии\n\n'+n.theories+'\n\n## Спросить мастера\n\n'+n.questions+'\n';download('zerkalie-'+data.party.id+'-notes.md',md,'text/markdown;charset=utf-8');});
   $('#backupNotes').addEventListener('click',()=>{download('zerkalie-'+data.party.id+'-backup.json',JSON.stringify({version:1,party:data.party.id,notes:saveNotes()},null,2),'application/json');});
   $('#importNotes').addEventListener('click',()=>$('#importFile').click());
   $('#importFile').addEventListener('change',async e=>{
     const f=e.target.files[0];if(!f)return;
-    try {if(f.size>2000000)throw new Error('Файл слишком большой.');const o=JSON.parse(await f.text());if(o.version!==1||o.party!==data.party.id||!o.notes||typeof o.notes!=='object')throw new Error('Нужна резервная копия блокнота этой пачки.');for(const k of ['character','facts','theories','questions'])if(typeof o.notes[k]!=='string')throw new Error('Формат записей повреждён.');if(!confirm('Восстановить записи из файла? Текущий блокнот будет заменён.'))return;notes=o.notes;fillNotes();saveNotes();toast('Блокнот восстановлен.');}catch(error){toast(error.message || 'Не удалось прочитать файл.');}finally{e.target.value='';}
+    try {if(f.size>2000000)throw new Error('Файл слишком большой.');const o=JSON.parse(await f.text());if(o.version!==1||o.party!==data.party.id||!o.notes||typeof o.notes!=='object')throw new Error('Нужна резервная копия блокнота этой пачки.');for(const k of ['character','facts','theories','questions'])if(typeof o.notes[k]!=='string')throw new Error('Формат записей повреждён.');if(o.notes.playerName!==undefined&&typeof o.notes.playerName!=='string')throw new Error('Формат записей повреждён.');if(!confirm('Восстановить записи из файла? Текущий блокнот будет заменён.'))return;notes={...o.notes,playerName:typeof o.notes.playerName==='string'?o.notes.playerName:''};fillNotes();saveNotes();toast('Блокнот восстановлен.');}catch(error){toast(error.message || 'Не удалось прочитать файл.');}finally{e.target.value='';}
   });
 
   $('#timeline').innerHTML = data.chronicle.map((entry,i)=>`<article class="entry"><span class="eyebrow">СЕССИЯ ${String(i+1).padStart(2,'0')}</span><h2>${esc(entry.title)}</h2><p>${esc(entry.text)}</p></article>`).join('');
