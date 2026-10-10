@@ -5,7 +5,7 @@
   const $$ = selector => [...document.querySelectorAll(selector)];
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const norm = value => String(value ?? '').toLocaleLowerCase('ru').replace(/ё/g,'е');
-  const asset = (folder, file) => 'assets/' + folder + '/' + encodeURIComponent(file);
+  const asset = (folder, file) => 'assets/' + folder + '/' + encodeURIComponent(file) + '?v=20261010-images2';
   const prefix = 'zerkalie:' + data.party.id + ':v2:';
   let storageAvailable = true;
   const read = (key, fallback) => {
@@ -81,7 +81,7 @@
   function selectPlace(id, scroll = true) {
     const p = data.places.find(x => x.id === id); if (!p) return;
     selectedPlace = id;
-    const url = p.image ? asset('locations',p.image) : 'assets/city-map.jpg';
+    const url = p.image ? asset('locations',p.image) : 'assets/city-map.jpg?v=20261010-images2';
     $('#detail').innerHTML = `<div class="detail-picture"><button type="button" data-image-place="${esc(id)}" aria-label="Рассмотреть изображение: ${esc(p.name)}"><img src="${url}" alt="${esc(p.name)}"><span class="image-hint">Рассмотреть ↗</span></button></div><div class="detail-body"><span class="eyebrow">${esc(p.category.toLocaleUpperCase('ru'))} / РОСТОВ-НА-ДОНУ</span><h2>${esc(p.name)}</h2><p>${esc(p.text)}</p><div class="detail-actions"><button type="button" class="button small" data-favorite="${esc(id)}" aria-pressed="${favorites.has(id)}">${favorites.has(id) ? '★ В избранном' : '☆ Сохранить место'}</button><button type="button" class="button small" data-note-place="${esc(id)}">✎ В блокнот</button></div></div>`;
     renderAtlas();
     if (scroll && innerWidth <= 950) $('#detail').scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',block:'start'});
@@ -160,7 +160,7 @@
     if(b.dataset.place){selectPlace(b.dataset.place);return;}
     if(b.dataset.favorite){const id=b.dataset.favorite;favorites.has(id)?favorites.delete(id):favorites.add(id);write('favorites',[...favorites]);selectPlace(id,false);return;}
     if(b.dataset.notePlace){const p=data.places.find(x=>x.id===b.dataset.notePlace);if(p){$('#noteFacts').value+=($('#noteFacts').value?'\n\n':'')+p.name+'\n';saveNotes();go('notebook');setTimeout(()=>$('#noteFacts').focus(),100);}return;}
-    if(b.dataset.imagePlace){const p=data.places.find(x=>x.id===b.dataset.imagePlace);if(p)imageDialog(p.name,p.image?asset('locations',p.image):'assets/city-map.jpg');return;}
+    if(b.dataset.imagePlace){const p=data.places.find(x=>x.id===b.dataset.imagePlace);if(p)imageDialog(p.name,p.image?asset('locations',p.image):'assets/city-map.jpg?v=20261010-images2');return;}
     if(b.dataset.gallery){const p=data.mapGallery.find(x=>x.id===b.dataset.gallery);if(p)imageDialog(p.name,asset('locations',p.image));return;}
     if(b.dataset.guideFilter){guideCategory=b.dataset.guideFilter;$$('[data-guide-filter]').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.guideFilter===guideCategory)));renderGuide();return;}
     if(b.dataset.searchAction){const action=b.dataset.searchAction,id=b.dataset.searchId;$('#searchDialog').close();if(action==='character')dossier(Number(id));else if(action==='place'){query='';category='all';onlyFavorites=false;$('#placeSearch').value='';$('#favoriteFilter').setAttribute('aria-pressed','false');$$('[data-category]').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.category==='all')));go('atlas');selectPlace(id,false);setTimeout(()=>$('#detail').scrollIntoView({block:'nearest'}),100);}else if(action==='guide'){guideCategory='Все';$$('[data-guide-filter]').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.guideFilter==='Все')));renderGuide();go('guide');setTimeout(()=>{const card=$('#guide-'+id);if(card){card.open=true;card.scrollIntoView({block:'nearest'});}},100);}else go(id);}
@@ -168,4 +168,5 @@
   renderAtlas();updatePrep();renderGuide();specializationSearch();fillNotes();route();
   if(!storageAvailable)$('#saveStatus').textContent='Хранилище недоступно. Скачивайте копии.';
 })();
+
 
