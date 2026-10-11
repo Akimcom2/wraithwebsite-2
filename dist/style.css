@@ -32,3 +32,41 @@ dialog{border:1px solid var(--line);padding:0;background:var(--panel);color:var(
 #sendQuestion:disabled{opacity:.55;cursor:not-allowed}
 @media(max-width:600px){.journal-send{align-items:stretch;flex-direction:column;padding:20px}.journal-send-action{align-items:stretch;flex-direction:column}.journal-send-status{max-width:none}}
 @media print{.journal-send{display:none!important}}
+
+.chronicle-builder{margin:0 0 24px;border:1px solid var(--line);background:var(--panel)}
+.chronicle-builder>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:15px;padding:17px 20px}
+.chronicle-builder>summary::-webkit-details-marker{display:none}
+.chronicle-builder>summary:focus-visible{outline-offset:-3px}
+.chronicle-builder-mark{display:grid;place-items:center;width:38px;height:38px;border:1px solid var(--line);color:var(--gold);font-size:18px}
+.chronicle-builder-summary-copy{display:grid;gap:4px;flex:1}
+.chronicle-builder-summary-copy strong{font:400 19px Georgia,'Times New Roman',serif}
+.chronicle-builder-summary-copy small{font-size:10px;color:var(--muted)}
+.chronicle-builder-toggle{font-size:22px;color:var(--accent);transition:transform .2s}
+.chronicle-builder[open] .chronicle-builder-toggle{transform:rotate(45deg)}
+.chronicle-builder-body{padding:22px;border-top:1px solid var(--line)}
+.chronicle-builder-intro{max-width:800px;margin-bottom:20px;color:var(--muted);font-size:11px}
+.chronicle-builder-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.chronicle-builder-field{display:grid;gap:8px;color:var(--accent);font-size:10px;line-height:1.5;letter-spacing:.035em}
+.chronicle-builder-field .muted{color:var(--muted);letter-spacing:0}
+.chronicle-builder-field-wide{grid-column:1/-1}
+.chronicle-builder-field input,.chronicle-builder-field textarea,.chronicle-builder-output{width:100%;min-width:0;border:1px solid var(--line);background:var(--bg);color:var(--text);padding:12px;font:12px/1.65 Arial,Helvetica,sans-serif;border-radius:2px}
+.chronicle-builder-field input{min-height:44px}
+.chronicle-builder-field textarea{min-height:96px;resize:vertical}
+.chronicle-builder-field input:focus,.chronicle-builder-field textarea:focus,.chronicle-builder-output:focus{border-color:var(--accent)}
+.chronicle-builder-actions{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0}
+.chronicle-builder-output-label{display:block;margin:8px 0;color:var(--accent);font-size:10px;letter-spacing:.04em}
+.chronicle-builder-output{min-height:250px;resize:vertical;white-space:pre-wrap}
+.chronicle-builder-status{margin-top:9px;color:var(--muted);font-size:10px}
+@media(max-width:600px){.chronicle-builder>summary{padding:15px}.chronicle-builder-body{padding:17px 14px}.chronicle-builder-fields{grid-template-columns:1fr}.chronicle-builder-field-wide{grid-column:auto}.chronicle-builder-actions .button{flex:1}}
+
+.chronicle-builder>summary .chronicle-builder-summary-copy small{letter-spacing:.02em}
+.chronicle-password-dialog{width:min(460px,92vw);padding:30px}
+.chronicle-password-dialog h2{margin:14px 0 9px;font:400 30px/1.15 Georgia,'Times New Roman',serif}
+.chronicle-password-dialog p{color:var(--muted);font-size:12px;line-height:1.6}
+.chronicle-password-form{display:grid;gap:13px}
+.chronicle-password-form>label{display:grid;gap:8px;color:var(--accent);font-size:10px;letter-spacing:.04em}
+.chronicle-password-form input{width:100%;min-height:46px;border:1px solid var(--line);background:var(--bg);color:var(--text);padding:12px;font:14px Arial,Helvetica,sans-serif;border-radius:2px}
+.chronicle-password-form input:focus{border-color:var(--accent);outline:1px solid var(--accent)}
+.chronicle-password-status{min-height:18px;margin:0}
+.chronicle-password-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:5px}
+@media(max-width:600px){.chronicle-password-dialog{padding:24px 18px}.chronicle-password-actions .button{flex:1}}

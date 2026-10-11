@@ -212,6 +212,150 @@
 
   $('#timeline').innerHTML = data.chronicle.map((entry,i)=>`<article class="entry"><span class="eyebrow">СЕССИЯ ${String(i+1).padStart(2,'0')}</span><h2>${esc(entry.title)}</h2><p>${esc(entry.text)}</p></article>`).join('');
   $('#chronicleEmpty').hidden=data.chronicle.length>0;
+  const chronicleSessionNumber = String(data.chronicle.length + 1).padStart(2, '0');
+  const chronicleDraftOutput = $('#chronicleDraftOutput');
+  const chronicleDraftStatus = $('#chronicleDraftStatus');
+  const chronicleDraftInputIds = [
+    'chronicleDraftChapter',
+    'chronicleDraftName',
+    'chronicleDraftDate',
+    'chronicleDraftSummary',
+    'chronicleDraftKnown',
+    'chronicleDraftNew',
+    'chronicleDraftQuestions',
+    'chronicleDraftEnding'
+  ];
+  function buildChronicleDraft() {
+    const chapter = $('#chronicleDraftChapter').value.trim();
+    const chapterNumber = Number(chapter);
+    const title = $('#chronicleDraftName').value.trim();
+    const summary = $('#chronicleDraftSummary').value.trim();
+    if (!Number.isInteger(chapterNumber) || chapterNumber < 1 || !title || !summary) {
+      chronicleDraftOutput.value = '';
+      chronicleDraftStatus.textContent = 'Заполни главу, короткое название и краткий итог сессии.';
+      const missingField = !Number.isInteger(chapterNumber) || chapterNumber < 1
+        ? $('#chronicleDraftChapter')
+        : (!title ? $('#chronicleDraftName') : $('#chronicleDraftSummary'));
+      missingField.focus();
+      return false;
+    }
+    const lines = [
+      'Обнови Хронику второй пачки по итогам сыгранной сессии ' + chronicleSessionNumber + '. Публикуй только то, что персонажи пережили, увидели или узнали. Не добавляй планы мастера, скрытые мотивы и будущие события.',
+      '',
+      '# Глава ' + chapterNumber + ' · Сессия ' + chronicleSessionNumber + ' · ' + title
+    ];
+    const date = $('#chronicleDraftDate').value;
+    const known = $('#chronicleDraftKnown').value.trim();
+    const newDetails = $('#chronicleDraftNew').value.trim();
+    const questions = $('#chronicleDraftQuestions').value.trim();
+    const ending = $('#chronicleDraftEnding').value.trim();
+    if (date) lines.push('', '**Дата:** ' + date);
+    lines.push('', '## Краткий итог', summary);
+    if (known) lines.push('', '## Что герои узнали или увидели', known);
+    if (newDetails) lines.push('', '## Новые места и лица для архива', newDetails);
+    if (questions) lines.push('', '## Открытые вопросы героев', questions);
+    if (ending) lines.push('', '## Где остановились', ending);
+    chronicleDraftOutput.value = lines.join('\n');
+    chronicleDraftStatus.textContent = 'Черновик собран. Проверь его на спойлеры перед обновлением Хроники.';
+    return true;
+  }
+  $('#chronicleDraftBuild').addEventListener('click', buildChronicleDraft);
+  $('#chronicleDraftCopy').addEventListener('click', async () => {
+    if (!buildChronicleDraft()) return;
+    try {
+      await navigator.clipboard.writeText(chronicleDraftOutput.value);
+      chronicleDraftStatus.textContent = 'Текст скопирован. Его можно прислать для обновления Хроники.';
+    } catch {
+      chronicleDraftOutput.focus();
+      chronicleDraftOutput.select();
+      chronicleDraftStatus.textContent = 'Автокопирование недоступно. Текст выделен: нажми Ctrl+C или ⌘C.';
+    }
+  });
+  chronicleDraftInputIds.forEach(id => {
+    $('#' + id).addEventListener('input', () => {
+      chronicleDraftOutput.value = '';
+      chronicleDraftStatus.textContent = 'Поля изменены. Собери черновик заново перед копированием.';
+    });
+  });
+
+  const chronicleBuilder = $('#chronicleBuilder');
+  const chroniclePasswordDialog = $('#chroniclePasswordDialog');
+  const chroniclePasswordForm = $('#chroniclePasswordForm');
+  const chroniclePasswordInput = $('#chroniclePasswordInput');
+  const chroniclePasswordStatus = $('#chroniclePasswordStatus');
+  const chroniclePasswordSubmit = $('#chroniclePasswordSubmit');
+  let chronicleAccessChecking = false;
+  let chroniclePasswordSubmitting = false;
+  async function checkChronicleAccess() {
+    try {
+      const response = await fetch('/api/chronicle-access', {cache:'no-store', credentials:'same-origin'});
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.enabled !== true) {
+        return {authorized:false, message:result.error || 'Не удалось проверить доступ. Попробуйте позже.'};
+      }
+      return {authorized:result.authorized === true, message:''};
+    } catch {
+      return {authorized:false, message:'Не удалось проверить доступ. Попробуйте позже.'};
+    }
+  }
+  chronicleBuilder.querySelector('summary').addEventListener('click', async event => {
+    if (chronicleBuilder.open) return;
+    event.preventDefault();
+    if (chronicleAccessChecking) return;
+    chronicleAccessChecking = true;
+    try {
+      const access = await checkChronicleAccess();
+      if (access.authorized) {
+        chronicleBuilder.open = true;
+        return;
+      }
+      chroniclePasswordForm.reset();
+      chroniclePasswordStatus.textContent = access.message || 'Введите пароль мастера.';
+      chroniclePasswordDialog.showModal();
+      chroniclePasswordInput.focus();
+    } finally {
+      chronicleAccessChecking = false;
+    }
+  });
+  chroniclePasswordForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (chroniclePasswordSubmitting) return;
+    chroniclePasswordSubmitting = true;
+    chroniclePasswordSubmit.disabled = true;
+    chroniclePasswordStatus.textContent = 'Проверяю пароль…';
+    try {
+      const response = await fetch('/api/chronicle-access', {
+        method:'POST',
+        cache:'no-store',
+        credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({password:chroniclePasswordInput.value})
+      });
+      const result = await response.json().catch(() => ({}));
+      if (response.ok && result.authorized === true) {
+        chroniclePasswordInput.value = '';
+        chroniclePasswordDialog.close();
+        chronicleBuilder.open = true;
+        chronicleBuilder.querySelector('summary').focus();
+      } else {
+        chroniclePasswordStatus.textContent = response.status === 401
+          ? 'Пароль не подошёл. Проверьте раскладку и попробуйте ещё раз.'
+          : result.error || 'Не удалось проверить пароль. Попробуйте позже.';
+        chroniclePasswordInput.value = '';
+        chroniclePasswordInput.focus();
+      }
+    } catch {
+      chroniclePasswordStatus.textContent = 'Не удалось проверить пароль. Попробуйте позже.';
+    } finally {
+      chroniclePasswordSubmitting = false;
+      chroniclePasswordSubmit.disabled = false;
+    }
+  });
+  chroniclePasswordDialog.addEventListener('close', () => {
+    chroniclePasswordInput.value = '';
+  });
+
+
 
   function openSearch() {$('#searchDialog').showModal();$('#globalSearch').value='';renderSearch('');$('#globalSearch').focus();}
   $('#searchOpen').addEventListener('click',openSearch);
