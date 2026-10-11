@@ -210,11 +210,18 @@
     try {if(f.size>2000000)throw new Error('Файл слишком большой.');const o=JSON.parse(await f.text());if(o.version!==1||o.party!==data.party.id||!o.notes||typeof o.notes!=='object')throw new Error('Нужна резервная копия блокнота этой пачки.');for(const k of ['character','facts','theories','questions'])if(typeof o.notes[k]!=='string')throw new Error('Формат записей повреждён.');if(o.notes.playerName!==undefined&&typeof o.notes.playerName!=='string')throw new Error('Формат записей повреждён.');if(!confirm('Восстановить записи из файла? Текущий блокнот будет заменён.'))return;notes={...o.notes,playerName:typeof o.notes.playerName==='string'?o.notes.playerName:''};fillNotes();saveNotes();toast('Блокнот восстановлен.');}catch(error){toast(error.message || 'Не удалось прочитать файл.');}finally{e.target.value='';}
   });
 
-  $('#timeline').innerHTML = data.chronicle.map((entry,i)=>`<article class="entry"><span class="eyebrow">СЕССИЯ ${String(i+1).padStart(2,'0')}</span><h2>${esc(entry.title)}</h2><p>${esc(entry.text)}</p></article>`).join('');
-  $('#chronicleEmpty').hidden=data.chronicle.length>0;
-  const chronicleSessionNumber = String(data.chronicle.length + 1).padStart(2, '0');
+  const staticChronicleEntries = data.chronicle.map((entry, index) => ({
+    ...entry,
+    sessionNumber:index + 1,
+    source:'static'
+  }));
+  let savedChronicleEntries = [];
+  let chronicleLoadComplete = false;
+  let chronicleLoadFailed = false;
+  let builtChronicleSessionNumber = null;
   const chronicleDraftOutput = $('#chronicleDraftOutput');
   const chronicleDraftStatus = $('#chronicleDraftStatus');
+  const chronicleDraftSave = $('#chronicleDraftSave');
   const chronicleDraftInputIds = [
     'chronicleDraftChapter',
     'chronicleDraftName',
@@ -225,12 +232,71 @@
     'chronicleDraftQuestions',
     'chronicleDraftEnding'
   ];
+  function chronicleEntries() {
+    return [...staticChronicleEntries, ...savedChronicleEntries]
+      .sort((a,b) => (Number(a.sessionNumber) || 0) - (Number(b.sessionNumber) || 0));
+  }
+  function nextChronicleSessionNumber() {
+    return chronicleEntries().reduce((max, entry) => Math.max(max, Number(entry.sessionNumber) || 0), 0) + 1;
+  }
+  function renderChronicleEntry(entry, index) {
+    const session = String(Number(entry.sessionNumber) || index + 1).padStart(2, '0');
+    if (!entry.id) {
+      return `<article class="entry"><span class="eyebrow">${entry.chapter ? 'ГЛАВА ' + esc(entry.chapter) + ' · ' : ''}СЕССИЯ ${session}</span><h2>${esc(entry.title)}</h2><p>${esc(entry.text)}</p></article>`;
+    }
+    const sections = [
+      ['Что герои узнали или увидели', entry.known],
+      ['Новые места и лица', entry.newDetails],
+      ['Открытые вопросы героев', entry.questions],
+      ['Где остановились', entry.ending]
+    ].filter(([, value]) => typeof value === 'string' && value.trim());
+    return `<article class="entry" data-chronicle-entry="${esc(entry.id)}">
+      <button class="chronicle-delete" type="button" data-chronicle-delete="${esc(entry.id)}" aria-label="Удалить запись «${esc(entry.title)}»" title="Удалить запись">×</button>
+      <span class="eyebrow">ГЛАВА ${esc(entry.chapter)} · СЕССИЯ ${session}</span>
+      ${entry.date ? `<p class="entry-date">${esc(entry.date)}</p>` : ''}
+      <h2>${esc(entry.title)}</h2>
+      <p class="entry-summary">${esc(entry.summary)}</p>
+      ${sections.map(([title, value]) => `<div class="entry-section"><h3>${esc(title)}</h3><p>${esc(value)}</p></div>`).join('')}
+    </article>`;
+  }
+  function renderChronicle() {
+    const entries = chronicleEntries();
+    $('#timeline').innerHTML = entries.map(renderChronicleEntry).join('');
+    $('#chronicleEmpty').hidden = entries.length > 0;
+  }
+  renderChronicle();
+
+  async function loadSavedChronicle() {
+    try {
+      const response = await fetch('/api/chronicle', {cache:'no-store', credentials:'same-origin'});
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !Array.isArray(result.entries)) throw new Error(result.error || 'Не удалось загрузить Хронику.');
+      savedChronicleEntries = result.entries;
+      renderChronicle();
+    } catch (error) {
+      chronicleLoadFailed = true;
+      chronicleDraftStatus.textContent = error.message || 'Не удалось загрузить Хронику. Попробуйте позже.';
+    } finally {
+      chronicleLoadComplete = true;
+    }
+  }
+  loadSavedChronicle();
+
+  let chronicleDraftIsCurrent = false;
   function buildChronicleDraft() {
+    if (!chronicleLoadComplete || chronicleLoadFailed) {
+      chronicleDraftStatus.textContent = chronicleLoadFailed
+        ? 'Не удалось загрузить Хронику. Обнови страницу и попробуй снова.'
+        : 'Загружаю Хронику. Через пару секунд можно будет собрать черновик.';
+      return false;
+    }
     const chapter = $('#chronicleDraftChapter').value.trim();
     const chapterNumber = Number(chapter);
     const title = $('#chronicleDraftName').value.trim();
     const summary = $('#chronicleDraftSummary').value.trim();
     if (!Number.isInteger(chapterNumber) || chapterNumber < 1 || !title || !summary) {
+      chronicleDraftIsCurrent = false;
+      chronicleDraftSave.disabled = true;
       chronicleDraftOutput.value = '';
       chronicleDraftStatus.textContent = 'Заполни главу, короткое название и краткий итог сессии.';
       const missingField = !Number.isInteger(chapterNumber) || chapterNumber < 1
@@ -239,10 +305,12 @@
       missingField.focus();
       return false;
     }
+    builtChronicleSessionNumber = nextChronicleSessionNumber();
+    const sessionNumber = String(builtChronicleSessionNumber).padStart(2, '0');
     const lines = [
-      'Обнови Хронику второй пачки по итогам сыгранной сессии ' + chronicleSessionNumber + '. Публикуй только то, что персонажи пережили, увидели или узнали. Не добавляй планы мастера, скрытые мотивы и будущие события.',
+      'Обнови Хронику второй пачки по итогам сыгранной сессии ' + sessionNumber + '. Публикуй только то, что персонажи пережили, увидели или узнали. Не добавляй планы мастера, скрытые мотивы и будущие события.',
       '',
-      '# Глава ' + chapterNumber + ' · Сессия ' + chronicleSessionNumber + ' · ' + title
+      '# Глава ' + chapterNumber + ' · Сессия ' + sessionNumber + ' · ' + title
     ];
     const date = $('#chronicleDraftDate').value;
     const known = $('#chronicleDraftKnown').value.trim();
@@ -256,7 +324,9 @@
     if (questions) lines.push('', '## Открытые вопросы героев', questions);
     if (ending) lines.push('', '## Где остановились', ending);
     chronicleDraftOutput.value = lines.join('\n');
-    chronicleDraftStatus.textContent = 'Черновик собран. Проверь его на спойлеры перед обновлением Хроники.';
+    chronicleDraftIsCurrent = true;
+    chronicleDraftSave.disabled = false;
+    chronicleDraftStatus.textContent = 'Черновик собран. Проверь текст и нажми «Сохранить в Хронику», когда будешь готов.';
     return true;
   }
   $('#chronicleDraftBuild').addEventListener('click', buildChronicleDraft);
@@ -264,7 +334,7 @@
     if (!buildChronicleDraft()) return;
     try {
       await navigator.clipboard.writeText(chronicleDraftOutput.value);
-      chronicleDraftStatus.textContent = 'Текст скопирован. Его можно прислать для обновления Хроники.';
+      chronicleDraftStatus.textContent = 'Текст скопирован. Проверь его и сохрани в Хронику, когда будешь готов.';
     } catch {
       chronicleDraftOutput.focus();
       chronicleDraftOutput.select();
@@ -273,9 +343,61 @@
   });
   chronicleDraftInputIds.forEach(id => {
     $('#' + id).addEventListener('input', () => {
+      chronicleDraftIsCurrent = false;
+      chronicleDraftSave.disabled = true;
       chronicleDraftOutput.value = '';
-      chronicleDraftStatus.textContent = 'Поля изменены. Собери черновик заново перед копированием.';
+      chronicleDraftStatus.textContent = 'Поля изменены. Собери черновик заново перед сохранением.';
     });
+  });
+
+  chronicleDraftSave.addEventListener('click', async () => {
+    if (!chronicleDraftIsCurrent || chronicleDraftSave.disabled) return;
+    if (builtChronicleSessionNumber !== nextChronicleSessionNumber()) {
+      chronicleDraftIsCurrent = false;
+      chronicleDraftSave.disabled = true;
+      chronicleDraftStatus.textContent = 'Пока проверяли черновик, в Хронике появилась новая запись. Собери черновик заново и проверь его.';
+      return;
+    }
+    const entry = {
+      chapter:Number($('#chronicleDraftChapter').value),
+      sessionNumber:nextChronicleSessionNumber(),
+      title:$('#chronicleDraftName').value.trim(),
+      date:$('#chronicleDraftDate').value,
+      summary:$('#chronicleDraftSummary').value.trim(),
+      known:$('#chronicleDraftKnown').value.trim(),
+      newDetails:$('#chronicleDraftNew').value.trim(),
+      questions:$('#chronicleDraftQuestions').value.trim(),
+      ending:$('#chronicleDraftEnding').value.trim()
+    };
+    chronicleDraftSave.disabled = true;
+    chronicleDraftStatus.textContent = 'Сохраняю запись…';
+    try {
+      const response = await fetch('/api/chronicle', {
+        method:'POST',
+        cache:'no-store',
+        credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({entry})
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !Array.isArray(result.entries)) {
+        throw new Error(result.error || 'Не удалось сохранить запись.');
+      }
+      savedChronicleEntries = result.entries;
+      renderChronicle();
+      chronicleDraftInputIds.forEach(id => { $('#' + id).value = ''; });
+      chronicleDraftOutput.value = '';
+      chronicleDraftIsCurrent = false;
+      chronicleDraftStatus.textContent = 'Запись опубликована в Хронике.';
+      toast('Запись добавлена в Хронику.');
+      requestAnimationFrame(() => {
+        const card = document.querySelector('[data-chronicle-entry="' + CSS.escape(result.entry.id) + '"]');
+        if (card) card.scrollIntoView({behavior:'smooth', block:'center'});
+      });
+    } catch (error) {
+      chronicleDraftSave.disabled = false;
+      chronicleDraftStatus.textContent = error.message || 'Не удалось сохранить запись. Попробуй ещё раз.';
+    }
   });
 
   const chronicleBuilder = $('#chronicleBuilder');
@@ -283,9 +405,26 @@
   const chroniclePasswordForm = $('#chroniclePasswordForm');
   const chroniclePasswordInput = $('#chroniclePasswordInput');
   const chroniclePasswordStatus = $('#chroniclePasswordStatus');
+  const chroniclePasswordIntro = $('#chroniclePasswordIntro');
+  const chroniclePasswordTitle = $('#chroniclePasswordTitle');
   const chroniclePasswordSubmit = $('#chroniclePasswordSubmit');
   let chronicleAccessChecking = false;
   let chroniclePasswordSubmitting = false;
+  let chroniclePasswordMode = 'unlock';
+  let pendingChronicleDeleteId = '';
+
+  function openChroniclePasswordDialog(mode, message) {
+    chroniclePasswordMode = mode;
+    chroniclePasswordForm.reset();
+    chroniclePasswordTitle.textContent = mode === 'delete' ? 'Удалить запись?' : 'Итоги сессии';
+    chroniclePasswordIntro.textContent = mode === 'delete'
+      ? 'Введите пароль мастера, чтобы удалить эту запись из Хроники.'
+      : 'Введите пароль, чтобы открыть шаблон публикации.';
+    chroniclePasswordSubmit.textContent = mode === 'delete' ? 'Удалить запись' : 'Открыть шаблон';
+    chroniclePasswordStatus.textContent = message || 'Введите пароль мастера.';
+    chroniclePasswordDialog.showModal();
+    chroniclePasswordInput.focus();
+  }
   async function checkChronicleAccess() {
     try {
       const response = await fetch('/api/chronicle-access', {cache:'no-store', credentials:'same-origin'});
@@ -309,10 +448,7 @@
         chronicleBuilder.open = true;
         return;
       }
-      chroniclePasswordForm.reset();
-      chroniclePasswordStatus.textContent = access.message || 'Введите пароль мастера.';
-      chroniclePasswordDialog.showModal();
-      chroniclePasswordInput.focus();
+      openChroniclePasswordDialog('unlock', access.message || 'Введите пароль мастера.');
     } finally {
       chronicleAccessChecking = false;
     }
@@ -324,12 +460,34 @@
     chroniclePasswordSubmit.disabled = true;
     chroniclePasswordStatus.textContent = 'Проверяю пароль…';
     try {
+      const password = chroniclePasswordInput.value;
+      if (chroniclePasswordMode === 'delete') {
+        const response = await fetch('/api/chronicle', {
+          method:'DELETE',
+          cache:'no-store',
+          credentials:'same-origin',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({id:pendingChronicleDeleteId, password})
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !Array.isArray(result.entries)) {
+          throw new Error(result.error || 'Не удалось удалить запись.');
+        }
+        savedChronicleEntries = result.entries;
+        renderChronicle();
+        chroniclePasswordInput.value = '';
+        pendingChronicleDeleteId = '';
+        chroniclePasswordDialog.close();
+        toast('Запись удалена из Хроники.');
+        return;
+      }
+
       const response = await fetch('/api/chronicle-access', {
         method:'POST',
         cache:'no-store',
         credentials:'same-origin',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({password:chroniclePasswordInput.value})
+        body:JSON.stringify({password})
       });
       const result = await response.json().catch(() => ({}));
       if (response.ok && result.authorized === true) {
@@ -338,14 +496,14 @@
         chronicleBuilder.open = true;
         chronicleBuilder.querySelector('summary').focus();
       } else {
-        chroniclePasswordStatus.textContent = response.status === 401
+        throw new Error(response.status === 401
           ? 'Пароль не подошёл. Проверьте раскладку и попробуйте ещё раз.'
-          : result.error || 'Не удалось проверить пароль. Попробуйте позже.';
-        chroniclePasswordInput.value = '';
-        chroniclePasswordInput.focus();
+          : result.error || 'Не удалось проверить пароль. Попробуйте позже.');
       }
-    } catch {
-      chroniclePasswordStatus.textContent = 'Не удалось проверить пароль. Попробуйте позже.';
+    } catch (error) {
+      chroniclePasswordStatus.textContent = error.message || 'Не удалось выполнить действие. Попробуйте ещё раз.';
+      chroniclePasswordInput.value = '';
+      chroniclePasswordInput.focus();
     } finally {
       chroniclePasswordSubmitting = false;
       chroniclePasswordSubmit.disabled = false;
@@ -353,9 +511,9 @@
   });
   chroniclePasswordDialog.addEventListener('close', () => {
     chroniclePasswordInput.value = '';
+    if (chroniclePasswordMode === 'delete') pendingChronicleDeleteId = '';
+    chroniclePasswordMode = 'unlock';
   });
-
-
 
   function openSearch() {$('#searchDialog').showModal();$('#globalSearch').value='';renderSearch('');$('#globalSearch').focus();}
   $('#searchOpen').addEventListener('click',openSearch);
@@ -365,6 +523,7 @@
   document.addEventListener('keydown',e=>{const tag=e.target.tagName;const typing=['INPUT','TEXTAREA','SELECT'].includes(tag)||e.target.isContentEditable;if((e.key==='/'&&!typing)||(e.key.toLowerCase()==='k'&&(e.ctrlKey||e.metaKey))){if($$('dialog[open]').length)return;e.preventDefault();openSearch();}});
   document.addEventListener('click',e=>{
     const b=e.target.closest('button');if(!b)return;
+    if(b.dataset.chronicleDelete){pendingChronicleDeleteId=b.dataset.chronicleDelete;openChroniclePasswordDialog('delete');return;}
     if(b.dataset.close){$('#'+b.dataset.close).close();return;}
     if(b.dataset.character!==undefined){dossier(Number(b.dataset.character));return;}
     if(b.dataset.pickCharacter){$('#notebookCharacter').value=b.dataset.pickCharacter;saveNotes();$('#characterDialog').close();go('notebook');return;}

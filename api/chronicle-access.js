@@ -35,27 +35,37 @@ function signature(expiry, secret) {
     .digest('base64url');
 }
 
-function cookieToken(req) {
+function cookieTokens(req) {
   const header = req.headers && req.headers.cookie;
-  if (typeof header !== 'string') return '';
+  if (typeof header !== 'string') return [];
   const prefix = COOKIE_NAME + '=';
-  const entry = header.split(';').map(value => value.trim()).find(value => value.startsWith(prefix));
-  return entry ? entry.slice(prefix.length) : '';
+  return header.split(';').map(value => value.trim())
+    .filter(value => value.startsWith(prefix))
+    .map(value => value.slice(prefix.length));
 }
 
-function hasValidSession(req, secret) {
-  const token = cookieToken(req);
+function validSessionToken(token, secret) {
   const dot = token.indexOf('.');
-  if (dot < 1) return false;
+  if (dot < 1) return null;
   const expiryText = token.slice(0, dot);
   const suppliedSignature = token.slice(dot + 1);
-  if (!/^\d+$/.test(expiryText) || !/^[A-Za-z0-9_-]+$/.test(suppliedSignature)) return false;
+  if (!/^\d+$/.test(expiryText) || !/^[A-Za-z0-9_-]+$/.test(suppliedSignature)) return null;
   const expiry = Number(expiryText);
   const now = Math.floor(Date.now() / 1000);
-  if (!Number.isSafeInteger(expiry) || expiry <= now || expiry > now + SESSION_TTL_SECONDS + 60) return false;
+  if (!Number.isSafeInteger(expiry) || expiry <= now || expiry > now + SESSION_TTL_SECONDS + 60) return null;
   const expected = Buffer.from(signature(expiryText, secret));
   const supplied = Buffer.from(suppliedSignature);
-  return expected.length === supplied.length && timingSafeEqual(expected, supplied);
+  return expected.length === supplied.length && timingSafeEqual(expected, supplied)
+    ? {token, expiry}
+    : null;
+}
+
+function findValidSession(req, secret) {
+  for (const token of cookieTokens(req)) {
+    const session = validSessionToken(token, secret);
+    if (session) return session;
+  }
+  return null;
 }
 
 function validSameOrigin(req) {
@@ -63,10 +73,27 @@ function validSameOrigin(req) {
   const host = req.headers && req.headers.host;
   if (typeof origin !== 'string' || typeof host !== 'string') return false;
   try {
-    return new URL(origin).host === host;
+    return new URL(origin).host.toLowerCase() === host.toLowerCase();
   } catch {
     return false;
   }
+}
+
+function cookieOptions(req) {
+  return process.env.NODE_ENV === 'production'
+    || (req.headers && req.headers['x-forwarded-proto'] === 'https')
+    ? '; Secure'
+    : '';
+}
+
+function clearLegacyCookie(secure) {
+  return COOKIE_NAME + '=; HttpOnly; SameSite=Strict; Path=/api/chronicle-access; Max-Age=0'
+    + (secure ? '; Secure' : '');
+}
+
+function sessionCookie(token, maxAge, secure) {
+  return COOKIE_NAME + '=' + token + '; HttpOnly; SameSite=Strict; Path=/api; Max-Age=' + maxAge
+    + (secure ? '; Secure' : '');
 }
 
 module.exports = async function chronicleAccess(req, res) {
@@ -82,7 +109,15 @@ module.exports = async function chronicleAccess(req, res) {
   }
 
   if (req.method === 'GET') {
-    return sendJson(res, 200, {enabled:true, authorized:hasValidSession(req, secret)});
+    const session = findValidSession(req, secret);
+    if (session) {
+      const secure = Boolean(cookieOptions(req));
+      res.setHeader('Set-Cookie', [
+        sessionCookie(session.token, Math.max(1, session.expiry - Math.floor(Date.now() / 1000)), secure),
+        clearLegacyCookie(secure)
+      ]);
+    }
+    return sendJson(res, 200, {enabled:true, authorized:Boolean(session)});
   }
 
   if (req.method !== 'POST') {
@@ -109,11 +144,11 @@ module.exports = async function chronicleAccess(req, res) {
   }
 
   const expiry = String(Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS);
-  const secure = process.env.NODE_ENV === 'production'
-    || (req.headers && req.headers['x-forwarded-proto'] === 'https');
-  const cookie = COOKIE_NAME + '=' + expiry + '.' + signature(expiry, secret)
-    + '; HttpOnly; SameSite=Strict; Path=/api/chronicle-access; Max-Age=' + SESSION_TTL_SECONDS
-    + (secure ? '; Secure' : '');
-  res.setHeader('Set-Cookie', cookie);
+  const secure = Boolean(cookieOptions(req));
+  const token = expiry + '.' + signature(expiry, secret);
+  res.setHeader('Set-Cookie', [
+    sessionCookie(token, SESSION_TTL_SECONDS, secure),
+    clearLegacyCookie(secure)
+  ]);
   return sendJson(res, 200, {enabled:true, authorized:true});
 };
