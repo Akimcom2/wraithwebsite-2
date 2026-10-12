@@ -5,7 +5,7 @@
   const $$ = selector => [...document.querySelectorAll(selector)];
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const norm = value => String(value ?? '').toLocaleLowerCase('ru').replace(/ё/g,'е');
-  const asset = (folder, file) => 'assets/' + folder + '/' + encodeURIComponent(file) + '?v=20261010-images2';
+  const asset = (folder, file) => 'assets/' + folder + '/' + encodeURIComponent(file) + '?v=20261013-portrait-fix2';
   const prefix = 'zerkalie:' + data.party.id + ':v2:';
   let storageAvailable = true;
   const read = (key, fallback) => {
