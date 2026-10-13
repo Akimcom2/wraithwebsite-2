@@ -53,7 +53,7 @@
     const c = list[index]; if (!c) return;
     const pickAction = group === 'characters' ? `<button type="button" class="button small" data-pick-character="${esc(c.name)}">Выбрать в своём блокноте ↗</button>` : '';
     const eyebrow = group === 'npcs' ? 'ДРУГИЕ ЛИЦА' : data.party.label.toLocaleUpperCase('ru');
-    $('#dossierBody').innerHTML = `<div class="dossier-layout"><img class="dossier-portrait" src="${asset('characters',c.portrait)}" alt="Портрет: ${esc(c.name)}"><div class="dossier-content"><span class="eyebrow">${esc(eyebrow)}</span><h2 id="dossierName">${esc(c.name)}</h2><span class="role">${esc(c.role)}</span><h3>Краткое знакомство</h3><p>${esc(c.background)}</p><h3>В разговоре</h3><p>${esc(c.prompt)}</p>${c.note ? `<p class="small-text" style="margin-top:20px">${esc(c.note)}</p>` : ''}${pickAction}</div></div>`;
+    $('#dossierBody').innerHTML = `<div class="dossier-layout"><img class="dossier-portrait" src="${asset('characters',c.portrait)}" alt="Портрет: ${esc(c.name)}"><div class="dossier-content"><span class="eyebrow">${esc(eyebrow)}</span><h2 id="dossierName">${esc(c.name)}</h2><span class="role">${esc(c.role)}</span><h3>Краткое знакомство</h3><p>${esc(c.background)}</p><h3>Заметки и вопросы</h3><p>${esc(c.prompt)}</p>${c.note ? `<p class="small-text" style="margin-top:20px">${esc(c.note)}</p>` : ''}${pickAction}</div></div>`;
     $('#characterDialog').showModal();
   }
   $$('dialog').forEach(dialog => {
