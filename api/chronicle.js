@@ -222,6 +222,63 @@ function validatedEntry(payload) {
   };
 }
 
+async function updateChronicleEntry(payload, res) {
+  if (typeof payload.entryId !== 'string' || !/^[a-f0-9-]{36}$/i.test(payload.entryId)) {
+    return sendJson(res, 400, {error:'Не удалось определить запись.'});
+  }
+  const validated = validatedEntry(payload.entry);
+  if (validated.error) return sendJson(res, 400, {error:validated.error});
+
+  try {
+    const entries = await readEntries();
+    const entryIndex = entries.findIndex(entry => entry && entry.id === payload.entryId);
+    if (entryIndex < 0) return sendJson(res, 404, {error:'Запись уже удалена или не найдена.'});
+    const current = entries[entryIndex];
+    const updated = {
+      ...current,
+      ...validated.value,
+      id:current.id,
+      sessionNumber:Number(current.sessionNumber) || validated.value.sessionNumber,
+      createdAt:current.createdAt || validated.value.createdAt,
+      updatedAt:new Date().toISOString()
+    };
+    const nextEntries = entries.map((entry,index) => index === entryIndex ? updated : entry);
+    await writeEntries(nextEntries);
+
+    const referencedUrls = new Set();
+    for (const entry of nextEntries) {
+      if (Array.isArray(entry && entry.memories)) {
+        for (const memory of entry.memories) {
+          if (memory && typeof memory.url === 'string') referencedUrls.add(memory.url);
+        }
+      }
+    }
+    const cleanupPaths = new Set();
+    for (const memory of Array.isArray(current.memories) ? current.memories : []) {
+      if (memory && typeof memory.url === 'string' &&
+          !referencedUrls.has(memory.url) && isUploadedMemoryUrl(memory.url)) {
+        cleanupPaths.add(new URL(memory.url).pathname.slice(1));
+      }
+    }
+
+    let storageCleanupFailed = false;
+    if (cleanupPaths.size) {
+      try {
+        const {del} = await blobSdk();
+        for (const path of cleanupPaths) {
+          try { await del(path); }
+          catch { storageCleanupFailed = true; }
+        }
+      } catch {
+        storageCleanupFailed = true;
+      }
+    }
+    return sendJson(res, 200, {entry:updated, entries:nextEntries, storageCleanupFailed});
+  } catch {
+    return sendJson(res, 503, {error:'Не удалось сохранить изменения. Проверьте подключение и повторите попытку.'});
+  }
+}
+
 module.exports = async function chronicle(req, res) {
   if (req.method === 'GET') {
     try {
@@ -251,6 +308,7 @@ module.exports = async function chronicle(req, res) {
     }
     if (payload.action === 'upload-memory') return uploadMemory(payload, res);
     if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) return sendJson(res, 413, {error:'Запись слишком большая.'});
+    if (payload.action === 'update-entry') return updateChronicleEntry(payload, res);
     const validated = validatedEntry(payload.entry);
     if (validated.error) return sendJson(res, 400, {error:validated.error});
     try {

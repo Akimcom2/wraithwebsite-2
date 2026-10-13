@@ -231,6 +231,8 @@
   const chronicleMemoryCount = $('#chronicleMemoryCount');
   let chronicleMemoryFiles = [];
   let chronicleMemoryProcessing = false;
+  let editingChronicleEntryId = '';
+
   const chronicleDraftInputIds = [
     'chronicleDraftChapter',
     'chronicleDraftName',
@@ -248,6 +250,12 @@
   function nextChronicleSessionNumber() {
     return chronicleEntries().reduce((max, entry) => Math.max(max, Number(entry.sessionNumber) || 0), 0) + 1;
   }
+  function draftSessionNumber() {
+    const editing = editingChronicleEntryId
+      ? chronicleEntries().find(entry => entry && entry.id === editingChronicleEntryId)
+      : null;
+    return editing ? Number(editing.sessionNumber) || nextChronicleSessionNumber() : nextChronicleSessionNumber();
+  }
   function renderMemoryGallery(memories, entryId) {
     if (!Array.isArray(memories) || !memories.length) return '';
     return `<div class="entry-section memories-section"><h3>Воспоминания <span class="memory-total">${memories.length}</span></h3><div class="memory-gallery">${memories.slice(0,20).map(memory => `<div class="memory-card-wrap"><button class="memory-card" type="button" data-memory-title="${esc(memory.title)}" data-memory-url="${esc(memory.url)}" aria-label="Открыть журнал: ${esc(memory.title)}"><img src="${esc(memory.url)}" alt="${esc(memory.title)}" loading="lazy" decoding="async"><span>${esc(memory.title)}</span></button>${entryId ? `<button class="memory-delete" type="button" data-chronicle-memory-delete="${esc(memory.url)}" data-memory-title="${esc(memory.title)}" aria-label="Удалить журнал: ${esc(memory.title)}" title="Удалить журнал">×</button>` : ''}</div>`).join('')}</div></div>`;
@@ -264,7 +272,10 @@
       ['Где остановились', entry.ending]
     ].filter(([, value]) => typeof value === 'string' && value.trim());
     return `<article class="entry" data-chronicle-entry="${esc(entry.id)}">
-      <button class="chronicle-delete" type="button" data-chronicle-delete="${esc(entry.id)}" aria-label="Удалить запись «${esc(entry.title)}»" title="Удалить запись">×</button>
+      <div class="chronicle-entry-actions">
+        <button class="chronicle-edit" type="button" data-chronicle-edit="${esc(entry.id)}" aria-label="Редактировать запись «${esc(entry.title)}»" title="Редактировать запись">Изменить</button>
+        <button class="chronicle-delete" type="button" data-chronicle-delete="${esc(entry.id)}" aria-label="Удалить запись «${esc(entry.title)}»" title="Удалить запись">×</button>
+      </div>
       <span class="eyebrow">ГЛАВА ${esc(entry.chapter)} · СЕССИЯ ${session}</span>
       ${entry.date ? `<p class="entry-date">${esc(entry.date)}</p>` : ''}
       <h2>${esc(entry.title)}</h2>
@@ -298,15 +309,28 @@
 
   let chronicleDraftIsCurrent = false;
   function clearChronicleMemories() {
-    chronicleMemoryFiles.forEach(memory => URL.revokeObjectURL(memory.previewUrl));
+    chronicleMemoryFiles.forEach(memory => {
+      if (typeof memory.previewUrl === 'string' && memory.previewUrl.startsWith('blob:')) URL.revokeObjectURL(memory.previewUrl);
+    });
     chronicleMemoryFiles = [];
     chronicleMemoryInput.value = '';
     renderChronicleMemoryPreviews();
   }
   function renderChronicleMemoryPreviews() {
     chronicleMemoryCount.textContent = `${chronicleMemoryFiles.length} из 20 журналов`;
-    chronicleMemoryPreview.innerHTML = chronicleMemoryFiles.map((memory,index) => `<figure class="chronicle-memory-preview-item"><button class="memory-remove" type="button" data-chronicle-memory-remove="${index}" aria-label="Убрать журнал: ${esc(memory.title)}" title="Убрать журнал">×</button><img src="${memory.previewUrl}" alt=""><figcaption>${esc(memory.title)}</figcaption></figure>`).join('');
+    chronicleMemoryPreview.innerHTML = chronicleMemoryFiles.map((memory,index) => `<figure class="chronicle-memory-preview-item"><button class="memory-remove" type="button" data-chronicle-memory-remove="${index}" aria-label="Убрать журнал: ${esc(memory.title)}" title="Убрать журнал">×</button><img src="${esc(memory.previewUrl)}" alt=""><figcaption><input type="text" maxlength="120" value="${esc(memory.title)}" data-chronicle-memory-title="${index}" aria-label="Название журнала"></figcaption></figure>`).join('');
   }
+  chronicleMemoryPreview.addEventListener('input',event => {
+    const input=event.target.closest('[data-chronicle-memory-title]');
+    if(!input)return;
+    const index=Number(input.dataset.chronicleMemoryTitle);
+    if(!Number.isInteger(index)||!chronicleMemoryFiles[index])return;
+    chronicleMemoryFiles[index].title=input.value.slice(0,120);
+    chronicleDraftIsCurrent=false;
+    chronicleDraftSave.disabled=true;
+    chronicleDraftOutput.value='';
+    chronicleDraftStatus.textContent='Название журнала изменено. Собери черновик заново перед сохранением.';
+  });
   function memoryTitleFromFile(file, index) {
     const title = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0,120);
     return !title || /^[a-f0-9-]{30,}$/i.test(title) ? `Журнал ${index + 1}` : title;
@@ -348,33 +372,42 @@
     chronicleDraftSave.disabled = true;
     chronicleDraftOutput.value = '';
     const files = [...chronicleMemoryInput.files];
-    clearChronicleMemories();
+    const editing = Boolean(editingChronicleEntryId);
+    const existing = editing ? chronicleMemoryFiles.slice() : [];
+    chronicleMemoryInput.value = '';
+    if (!editing) clearChronicleMemories();
     if (!files.length) {
-      chronicleDraftStatus.textContent = 'Журналы не выбраны. Можно сохранить запись без изображений.';
+      chronicleDraftStatus.textContent = editing
+        ? 'Список Воспоминаний сохранён. Собери черновик перед сохранением.'
+        : 'Журналы не выбраны. Можно сохранить запись без изображений.';
       return;
     }
-    if (files.length > 20) {
-      chronicleDraftStatus.textContent = 'Можно добавить не больше 20 журналов за одну сессию.';
+    if (existing.length + files.length > 20) {
+      chronicleDraftStatus.textContent = editing
+        ? `Можно оставить не больше 20 журналов. Сейчас выбрано ${existing.length}, добавляешь ${files.length}.`
+        : 'Можно добавить не больше 20 журналов за одну сессию.';
       return;
     }
     chronicleMemoryProcessing = true;
     chronicleMemoryInput.disabled = true;
-    const prepared = [];
+    const prepared = existing.slice();
     chronicleDraftStatus.textContent = `Подготавливаю ${files.length} изображений…`;
     try {
       for (let i = 0; i < files.length; i++) {
         const blob = await optimizeChronicleImage(files[i]);
-        prepared.push({title:memoryTitleFromFile(files[i],i), blob, previewUrl:URL.createObjectURL(blob), uploadedUrl:''});
+        const title = memoryTitleFromFile(files[i], prepared.length);
+        prepared.push({title, blob, previewUrl:URL.createObjectURL(blob), uploadedUrl:''});
         chronicleMemoryFiles = prepared;
         renderChronicleMemoryPreviews();
         chronicleDraftStatus.textContent = `Подготовлено ${i + 1} из ${files.length} изображений…`;
       }
       chronicleDraftStatus.textContent = `${prepared.length} журналов готовы. Собери черновик перед сохранением.`;
     } catch (error) {
-      prepared.forEach(memory => URL.revokeObjectURL(memory.previewUrl));
-      chronicleMemoryFiles = [];
+      prepared.slice(existing.length).forEach(memory => {
+        if (typeof memory.previewUrl === 'string' && memory.previewUrl.startsWith('blob:')) URL.revokeObjectURL(memory.previewUrl);
+      });
+      chronicleMemoryFiles = existing;
       renderChronicleMemoryPreviews();
-      chronicleMemoryInput.value = '';
       chronicleDraftStatus.textContent = error.message || 'Не удалось подготовить изображения.';
     } finally {
       chronicleMemoryProcessing = false;
@@ -407,10 +440,21 @@
       missingField.focus();
       return false;
     }
-    builtChronicleSessionNumber = nextChronicleSessionNumber();
+    const missingMemoryTitleIndex = chronicleMemoryFiles.findIndex(memory => !memory.title.trim());
+    if (missingMemoryTitleIndex >= 0) {
+      chronicleDraftIsCurrent = false;
+      chronicleDraftSave.disabled = true;
+      chronicleDraftStatus.textContent = 'Укажи название для каждого журнала.';
+      chronicleMemoryPreview.querySelector('[data-chronicle-memory-title="' + missingMemoryTitleIndex + '"]')?.focus();
+      return false;
+    }
+    builtChronicleSessionNumber = draftSessionNumber();
     const sessionNumber = String(builtChronicleSessionNumber).padStart(2, '0');
+    const instruction = editingChronicleEntryId
+      ? 'Отредактируй существующую запись Хроники второй пачки для сессии ' + sessionNumber + '. Сохрани известные героям факты, не добавляй планы мастера и будущие события.'
+      : 'Обнови Хронику второй пачки по итогам сыгранной сессии ' + sessionNumber + '. Публикуй только то, что персонажи пережили, увидели или узнали. Не добавляй планы мастера, скрытые мотивы и будущие события.';
     const lines = [
-      'Обнови Хронику второй пачки по итогам сыгранной сессии ' + sessionNumber + '. Публикуй только то, что персонажи пережили, увидели или узнали. Не добавляй планы мастера, скрытые мотивы и будущие события.',
+      instruction,
       '',
       '# Глава ' + chapterNumber + ' · Сессия ' + sessionNumber + ' · ' + title
     ];
@@ -425,11 +469,13 @@
     if (newDetails) lines.push('', '## Новые места и лица для архива', newDetails);
     if (questions) lines.push('', '## Открытые вопросы героев', questions);
     if (ending) lines.push('', '## Где остановились', ending);
-    if (chronicleMemoryFiles.length) lines.push('', '## Воспоминания', ...chronicleMemoryFiles.map(memory => '- ' + memory.title));
+    if (chronicleMemoryFiles.length) lines.push('', '## Воспоминания', ...chronicleMemoryFiles.map(memory => '- ' + memory.title.trim()));
     chronicleDraftOutput.value = lines.join('\n');
     chronicleDraftIsCurrent = true;
     chronicleDraftSave.disabled = false;
-    chronicleDraftStatus.textContent = 'Черновик собран. Проверь текст и нажми «Сохранить в Хронику», когда будешь готов.';
+    chronicleDraftStatus.textContent = editingChronicleEntryId
+      ? 'Черновик собран. Проверь исправления и нажми «Сохранить изменения».'
+      : 'Черновик собран. Проверь текст и нажми «Сохранить в Хронику», когда будешь готов.';
     return true;
   }
   $('#chronicleDraftBuild').addEventListener('click', buildChronicleDraft);
@@ -449,13 +495,17 @@
       chronicleDraftIsCurrent = false;
       chronicleDraftSave.disabled = true;
       chronicleDraftOutput.value = '';
-      chronicleDraftStatus.textContent = 'Поля изменены. Собери черновик заново перед сохранением.';
+      chronicleDraftStatus.textContent = editingChronicleEntryId
+        ? 'Поля изменены. Собери черновик заново перед сохранением изменений.'
+        : 'Поля изменены. Собери черновик заново перед сохранением.';
     });
   });
 
   chronicleDraftSave.addEventListener('click', async () => {
     if (!chronicleDraftIsCurrent || chronicleDraftSave.disabled) return;
-    if (builtChronicleSessionNumber !== nextChronicleSessionNumber()) {
+    const editedEntryId = editingChronicleEntryId;
+    const isEditing = Boolean(editedEntryId);
+    if (builtChronicleSessionNumber !== draftSessionNumber()) {
       chronicleDraftIsCurrent = false;
       chronicleDraftSave.disabled = true;
       chronicleDraftStatus.textContent = 'Пока проверяли черновик, в Хронике появилась новая запись. Собери черновик заново и проверь его.';
@@ -463,7 +513,7 @@
     }
     const entry = {
       chapter:Number($('#chronicleDraftChapter').value),
-      sessionNumber:nextChronicleSessionNumber(),
+      sessionNumber:builtChronicleSessionNumber,
       title:$('#chronicleDraftName').value.trim(),
       date:$('#chronicleDraftDate').value,
       summary:$('#chronicleDraftSummary').value.trim(),
@@ -503,7 +553,9 @@
         cache:'no-store',
         credentials:'same-origin',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({entry})
+        body:JSON.stringify(isEditing
+          ? {action:'update-entry', entryId:editedEntryId, entry}
+          : {entry})
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !Array.isArray(result.entries)) {
@@ -511,14 +563,15 @@
       }
       savedChronicleEntries = result.entries;
       renderChronicle();
-      chronicleDraftInputIds.forEach(id => { $('#' + id).value = ''; });
-      clearChronicleMemories();
-      chronicleDraftOutput.value = '';
-      chronicleDraftIsCurrent = false;
-      chronicleDraftStatus.textContent = 'Запись опубликована в Хронике.';
-      toast('Запись добавлена в Хронику.');
+      const savedEntry = result.entry || result.entries.find(item => item && item.id === editedEntryId);
+      resetChronicleEditor();
+      chronicleDraftStatus.textContent = isEditing ? 'Изменения сохранены в Хронике.' : 'Запись опубликована в Хронике.';
+      toast(isEditing
+        ? (result.storageCleanupFailed ? 'Запись обновлена; файл удалённого журнала остался в хранилище.' : 'Запись Хроники обновлена.')
+        : 'Запись добавлена в Хронику.');
       requestAnimationFrame(() => {
-        const card = document.querySelector('[data-chronicle-entry="' + CSS.escape(result.entry.id) + '"]');
+        if (!savedEntry) return;
+        const card = document.querySelector('[data-chronicle-entry="' + CSS.escape(savedEntry.id) + '"]');
         if (card) card.scrollIntoView({behavior:'smooth', block:'center'});
       });
     } catch (error) {
@@ -531,6 +584,7 @@
   });
 
   const chronicleBuilder = $('#chronicleBuilder');
+  const chronicleEditCancel = $('#chronicleEditCancel');
   const chroniclePasswordDialog = $('#chroniclePasswordDialog');
   const chroniclePasswordForm = $('#chroniclePasswordForm');
   const chroniclePasswordInput = $('#chroniclePasswordInput');
@@ -540,24 +594,86 @@
   const chroniclePasswordSubmit = $('#chroniclePasswordSubmit');
   let chronicleAccessChecking = false;
   let chroniclePasswordSubmitting = false;
+  function resetChronicleEditor() {
+    editingChronicleEntryId = '';
+    chronicleDraftInputIds.forEach(id => { $('#' + id).value = ''; });
+    clearChronicleMemories();
+    chronicleDraftOutput.value = '';
+    chronicleDraftIsCurrent = false;
+    chronicleDraftSave.disabled = true;
+    chronicleDraftSave.textContent = 'Сохранить в Хронику';
+    chronicleEditCancel.hidden = true;
+    chronicleBuilder.querySelector('summary strong').textContent = 'Шаблон публикации итогов сессии';
+    chronicleBuilder.querySelector('.chronicle-builder-intro').textContent = 'Заполни поля после игры. Включай только то, что персонажи действительно пережили, увидели или узнали. Проверь черновик, затем сохрани готовую запись прямо в Хронику.';
+    chronicleDraftStatus.textContent = 'Пустые необязательные поля не попадут в черновик.';
+  }
+  function startChronicleEdit(entryId) {
+    const entry = chronicleEntries().find(item => item && item.id === entryId);
+    if (!entry) return false;
+    editingChronicleEntryId = entry.id;
+    const values = {
+      chronicleDraftChapter:entry.chapter,
+      chronicleDraftName:entry.title,
+      chronicleDraftDate:entry.date || '',
+      chronicleDraftSummary:entry.summary,
+      chronicleDraftKnown:entry.known || '',
+      chronicleDraftNew:entry.newDetails || '',
+      chronicleDraftQuestions:entry.questions || '',
+      chronicleDraftEnding:entry.ending || ''
+    };
+    for (const [id,value] of Object.entries(values)) $('#' + id).value = value ?? '';
+    clearChronicleMemories();
+    chronicleMemoryFiles = (Array.isArray(entry.memories) ? entry.memories : [])
+      .filter(memory => memory && typeof memory.url === 'string')
+      .slice(0,20)
+      .map(memory => ({title:String(memory.title || ''), blob:null, previewUrl:memory.url, uploadedUrl:memory.url}));
+    renderChronicleMemoryPreviews();
+    chronicleDraftOutput.value = '';
+    chronicleDraftIsCurrent = false;
+    chronicleDraftSave.disabled = true;
+    chronicleDraftSave.textContent = 'Сохранить изменения';
+    chronicleEditCancel.hidden = false;
+    const session = String(Number(entry.sessionNumber) || 0).padStart(2,'0');
+    chronicleBuilder.querySelector('summary strong').textContent = 'Редактирование записи · сессия ' + session;
+    chronicleBuilder.querySelector('.chronicle-builder-intro').textContent = 'Измени текст, названия журналов, добавь новые изображения или убери лишние. Номер сессии и дата создания записи останутся прежними.';
+    chronicleDraftStatus.textContent = 'Запись загружена. Внеси правки и собери черновик перед сохранением.';
+    chronicleBuilder.open = true;
+    requestAnimationFrame(() => chronicleBuilder.scrollIntoView({behavior:'smooth', block:'start'}));
+    return true;
+  }
+  chronicleEditCancel.addEventListener('click', () => {
+    resetChronicleEditor();
+    chronicleBuilder.open = false;
+    toast('Редактирование отменено.');
+  });
+  chronicleBuilder.addEventListener('toggle', () => {
+    if (!chronicleBuilder.open && editingChronicleEntryId) resetChronicleEditor();
+  });
   let chroniclePasswordMode = 'unlock';
   let pendingChronicleDeleteId = '';
   let pendingChronicleMemoryDelete = null;
+  let pendingChronicleEditId = '';
 
   function openChroniclePasswordDialog(mode, message) {
     chroniclePasswordMode = mode;
     chroniclePasswordForm.reset();
     chroniclePasswordTitle.textContent = mode === 'delete'
       ? 'Удалить запись?'
-      : mode === 'delete-memory' ? 'Удалить журнал?' : 'Итоги сессии';
+      : mode === 'delete-memory' ? 'Удалить журнал?'
+        : mode === 'edit-entry' ? 'Редактировать запись?'
+          : 'Итоги сессии';
     chroniclePasswordIntro.textContent = mode === 'delete'
       ? 'Введите пароль мастера, чтобы удалить эту запись из Хроники.'
       : mode === 'delete-memory'
         ? `Введите пароль мастера, чтобы удалить журнал «${pendingChronicleMemoryDelete?.title || 'Воспоминание'}» из Хроники.`
-        : 'Введите пароль, чтобы открыть шаблон публикации.';
+        : mode === 'edit-entry'
+          ? 'Введите пароль мастера, чтобы открыть запись в режиме редактирования.'
+          : 'Введите пароль, чтобы открыть шаблон публикации.';
     chroniclePasswordSubmit.textContent = mode === 'delete'
       ? 'Удалить запись'
-      : mode === 'delete-memory' ? 'Удалить журнал' : 'Открыть шаблон публикации';
+      : mode === 'delete-memory' ? 'Удалить журнал'
+        : mode === 'edit-entry' ? 'Открыть редактирование'
+          : 'Открыть шаблон публикации';
     chroniclePasswordStatus.textContent = message || 'Введите пароль мастера.';
     chroniclePasswordDialog.showModal();
     chroniclePasswordInput.focus();
@@ -598,6 +714,8 @@
     chroniclePasswordStatus.textContent = 'Проверяю пароль…';
     try {
       const password = chroniclePasswordInput.value;
+      const requestedMode = chroniclePasswordMode;
+      const requestedEditId = pendingChronicleEditId;
       if (chroniclePasswordMode === 'delete-memory') {
         if (!pendingChronicleMemoryDelete) throw new Error('Не удалось определить журнал.');
         const response = await fetch('/api/chronicle', {
@@ -659,8 +777,15 @@
       if (response.ok && result.authorized === true) {
         chroniclePasswordInput.value = '';
         chroniclePasswordDialog.close();
-        chronicleBuilder.open = true;
-        chronicleBuilder.querySelector('summary').focus();
+        if (requestedMode === 'edit-entry') {
+          if (!startChronicleEdit(requestedEditId)) {
+            toast('Не удалось открыть запись для редактирования.');
+            return;
+          }
+        } else {
+          chronicleBuilder.open = true;
+          chronicleBuilder.querySelector('summary').focus();
+        }
       } else {
         throw new Error(response.status === 401
           ? 'Пароль не подошёл. Проверьте раскладку и попробуйте ещё раз.'
@@ -679,6 +804,7 @@
     chroniclePasswordInput.value = '';
     if (chroniclePasswordMode === 'delete') pendingChronicleDeleteId = '';
     if (chroniclePasswordMode === 'delete-memory') pendingChronicleMemoryDelete = null;
+    if (chroniclePasswordMode === 'edit-entry') pendingChronicleEditId = '';
     chroniclePasswordMode = 'unlock';
   });
 
@@ -690,6 +816,11 @@
   document.addEventListener('keydown',e=>{const tag=e.target.tagName;const typing=['INPUT','TEXTAREA','SELECT'].includes(tag)||e.target.isContentEditable;if((e.key==='/'&&!typing)||(e.key.toLowerCase()==='k'&&(e.ctrlKey||e.metaKey))){if($$('dialog[open]').length)return;e.preventDefault();openSearch();}});
   document.addEventListener('click',e=>{
     const b=e.target.closest('button');if(!b)return;
+    if(b.dataset.chronicleEdit){
+      pendingChronicleEditId=b.dataset.chronicleEdit;
+      openChroniclePasswordDialog('edit-entry');
+      return;
+    }
     if(b.dataset.chronicleMemoryDelete!==undefined){
       const entry=b.closest('[data-chronicle-entry]');
       if(!entry)return;

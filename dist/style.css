@@ -96,3 +96,10 @@ dialog{border:1px solid var(--line);padding:0;background:var(--panel);color:var(
 .memory-delete{position:absolute;top:7px;right:7px;z-index:2;display:grid;place-items:center;width:29px;height:29px;padding:0;border:1px solid var(--line);border-radius:50%;background:#101820e8;color:#fff;font:20px/1 Arial,Helvetica,sans-serif;cursor:pointer}
 .memory-delete:hover,.memory-delete:focus-visible{border-color:#b96f65;background:#3b1b1a;color:#ffd9d2}
 .memory-delete:disabled{opacity:.6;cursor:wait}
+
+.chronicle-entry-actions{position:absolute;top:14px;right:14px;display:flex;align-items:center;gap:7px}
+.chronicle-entry-actions .chronicle-delete{position:static;flex:none}
+.chronicle-edit{height:36px;padding:0 11px;border:1px solid var(--line);border-radius:18px;background:transparent;color:var(--text);font-size:10px;cursor:pointer;transition:.2s}
+.chronicle-edit:hover,.chronicle-edit:focus-visible{border-color:var(--accent);color:var(--accent)}
+.chronicle-memory-preview-item figcaption input{display:block;width:100%;background:var(--panel);color:var(--text);border:1px solid var(--line);padding:7px 8px;font:10px Arial,Helvetica,sans-serif}
+.chronicle-memory-preview-item figcaption input:focus{outline:1px solid var(--accent);border-color:var(--accent)}
