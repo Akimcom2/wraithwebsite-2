@@ -103,6 +103,29 @@ function validDate(value) {
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : '';
 }
 
+function uploadedMemoryPath(value) {
+  if (typeof value !== 'string') return null;
+  try {
+    if (value.startsWith('/api/chronicle-memory?')) {
+      const url = new URL(value, 'https://chronicle.invalid');
+      if (url.origin === 'https://chronicle.invalid' &&
+          url.pathname === '/api/chronicle-memory' &&
+          !url.hash &&
+          url.searchParams.size === 1 &&
+          /^[a-f0-9-]{36}$/i.test(url.searchParams.get('id') || '')) {
+        return 'chronicle/memories/' + url.searchParams.get('id') + '.webp';
+      }
+    }
+    const validBlobHost = url.hostname.endsWith('.public.blob.vercel-storage.com') ||
+      url.hostname.endsWith('.private.blob.vercel-storage.com');
+    if (url.protocol === 'https:' && validBlobHost && !url.username && !url.password &&
+        /^\/chronicle\/memories\/[a-f0-9-]+\.webp$/i.test(url.pathname)) {
+      return url.pathname.slice(1);
+    }
+  } catch {}
+  return null;
+}
+
 function validatedMemories(value) {
   if (value === undefined) return {value:[]};
   if (!Array.isArray(value) || value.length > 20) return {error:'Добавь не больше 20 изображений воспоминаний.'};
@@ -113,12 +136,7 @@ function validatedMemories(value) {
     const imageUrl = typeof item.url === 'string' ? item.url.trim() : '';
     if (!title || imageUrl.length > 1000) return {error:'Проверь названия и адреса изображений.'};
     const isSiteAsset = /^\/assets\/chronicle\/[A-Za-z0-9/_-]+\.(?:webp|png|jpe?g)$/i.test(imageUrl);
-    let isVercelBlob = false;
-    try {
-      const url = new URL(imageUrl);
-      isVercelBlob = url.protocol === 'https:' && url.hostname.endsWith('.public.blob.vercel-storage.com') && !url.username && !url.password;
-    } catch {}
-    if (!isSiteAsset && !isVercelBlob) return {error:'Адрес изображения не поддерживается.'};
+    if (!isSiteAsset && !uploadedMemoryPath(imageUrl)) return {error:'Адрес изображения не поддерживается.'};
     memories.push({title, url:imageUrl});
   }
   return {value:memories};
@@ -134,28 +152,22 @@ async function uploadMemory(payload, res) {
   }
   try {
     const {put} = await blobSdk();
-    const blob = await put('chronicle/memories/' + randomUUID() + '.webp', image, {
-      access:'public',
+    const id = randomUUID();
+    const pathname = 'chronicle/memories/' + id + '.webp';
+    await put(pathname, image, {
+      access:'private',
       addRandomSuffix:false,
       contentType:'image/webp',
       cacheControlMaxAge:31536000
     });
-    return sendJson(res, 201, {memory:{url:blob.url, pathname:blob.pathname}});
+    return sendJson(res, 201, {memory:{url:'/api/chronicle-memory?id=' + id, pathname}});
   } catch {
     return sendJson(res, 503, {error:'Не удалось загрузить изображение. Проверьте соединение и повторите попытку.'});
   }
 }
 
 function isUploadedMemoryUrl(value) {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' &&
-      url.hostname.endsWith('.public.blob.vercel-storage.com') &&
-      !url.username && !url.password &&
-      /^\/chronicle\/memories\/[a-f0-9-]+\.webp$/i.test(url.pathname);
-  } catch {
-    return false;
-  }
+  return uploadedMemoryPath(value) !== null;
 }
 
 async function blobSdk() {
@@ -257,7 +269,7 @@ async function updateChronicleEntry(payload, res) {
     for (const memory of Array.isArray(current.memories) ? current.memories : []) {
       if (memory && typeof memory.url === 'string' &&
           !referencedUrls.has(memory.url) && isUploadedMemoryUrl(memory.url)) {
-        cleanupPaths.add(new URL(memory.url).pathname.slice(1));
+        cleanupPaths.add(uploadedMemoryPath(memory.url));
       }
     }
 
@@ -365,7 +377,7 @@ module.exports = async function chronicle(req, res) {
       if (!stillReferenced && isUploadedMemoryUrl(removedMemory.url)) {
         try {
           const {del} = await blobSdk();
-          await del(new URL(removedMemory.url).pathname.slice(1));
+          await del(uploadedMemoryPath(removedMemory.url));
         } catch {
           storageCleanupFailed = true;
         }
