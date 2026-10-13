@@ -5,7 +5,7 @@
   const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const panel=document.createElement('section');
   panel.className='campaign-admin';
-  panel.innerHTML="<details id='campaignAdminGate'><summary><span class='chronicle-builder-mark' aria-hidden='true'>✎</span><span class='chronicle-builder-summary-copy'><strong>Редактор кампании</strong><small>Мастер · персонажи, места, правила и настройки</small></span><span class='chronicle-builder-toggle' aria-hidden='true'>+</span></summary><div class='campaign-admin-body'><p class='campaign-admin-intro'>Изменения сохраняются отдельно от Хроники. Скрытые записи можно вернуть из редактора. Карточки и текст останутся в архиве.</p><nav class='campaign-admin-tabs' aria-label='Разделы редактора'><button type='button' data-admin-tab='campaign' aria-pressed='true'>Кампания</button><button type='button' data-admin-tab='characters'>Игроки</button><button type='button' data-admin-tab='npcs'>Другие лица</button><button type='button' data-admin-tab='places'>Места</button><button type='button' data-admin-tab='mapGallery'>Атлас</button><button type='button' data-admin-tab='guide'>Правила</button><button type='button' data-admin-tab='preparation'>Подготовка</button><button type='button' data-admin-tab='specializations'>Специализации</button></nav><div id='campaignAdminPane'></div><div class='campaign-admin-footer'><button type='button' class='button small' id='campaignExport'>Скачать конфигурацию</button><span id='campaignAdminStatus' role='status' aria-live='polite'>Доступ открыт мастеру.</span></div></div></details>";
+  panel.innerHTML="<details id='campaignAdminGate'><summary><span class='chronicle-builder-mark' aria-hidden='true'>✎</span><span class='chronicle-builder-summary-copy'><strong>Редактор кампании</strong><small>Мастер · персонажи, места, правила и настройки</small></span><span class='chronicle-builder-toggle' aria-hidden='true'>+</span></summary><div class='campaign-admin-body'><p class='campaign-admin-intro'>Изменения сохраняются отдельно от Хроники. Скрытые записи можно вернуть из редактора. Карточки и текст останутся в архиве.</p><nav class='campaign-admin-tabs' aria-label='Разделы редактора'><button type='button' data-admin-tab='campaign' aria-pressed='true'>Кампания</button><button type='button' data-admin-tab='characters'>Игроки</button><button type='button' data-admin-tab='npcs'>Другие лица</button><button type='button' data-admin-tab='places'>Места</button><button type='button' data-admin-tab='mapGallery'>Атлас</button><button type='button' data-admin-tab='guide'>Правила</button><button type='button' data-admin-tab='preparation'>Подготовка</button><button type='button' data-admin-tab='specializations'>Специализации</button></nav><div id='campaignAdminPane'></div><div class='campaign-admin-footer'><button type='button' class='button small' id='campaignExport'>Скачать конфигурацию</button><button type='button' class='button small' id='campaignBackup'>Полная резервная копия</button><span id='campaignAdminStatus' role='status' aria-live='polite'>Доступ открыт мастеру.</span></div></div></details>";
   const chronicle=$('#chronicle');
   chronicle.insertBefore(panel,$('#chronicleBuilder'));
   const gate=$('#campaignAdminGate'),pane=$('#campaignAdminPane'),status=$('#campaignAdminStatus');
@@ -216,8 +216,13 @@
   panel.addEventListener('click',event=>{
     const tab=event.target.closest('[data-admin-tab]');if(tab){switchTab(tab.dataset.adminTab);return;}
     if(event.target.closest('#campaignExport')){
-      const source='// Конфигурация кампании. Сохраните файл в dist/campaign-config.js.\nwindow.CAMPAIGN_CONFIG = '+JSON.stringify(snapshot(),null,2)+';\n';
-      download('campaign-config.js',source,'text/javascript;charset=utf-8');setStatus('Файл конфигурации скачан.');return;
+      const exported=snapshot();
+      for(const key of ['characters','npcs','places','mapGallery','preparation','guide','specializations'])exported[key]=exported[key].filter(item=>item.hidden!==true);
+      const source='// Публичная конфигурация кампании. Сохраните файл в dist/campaign-config.js.\nwindow.CAMPAIGN_CONFIG = '+JSON.stringify(exported,null,2)+';\n';
+      download('campaign-config.js',source,'text/javascript;charset=utf-8');setStatus('Публичная конфигурация скачана.');return;
+    }
+    if(event.target.closest('#campaignBackup')){
+      download('campaign-backup.json',JSON.stringify(snapshot(),null,2),'application/json;charset=utf-8');setStatus('Полная резервная копия скачана.');return;
     }
     if(event.target.closest('[data-new-entry]')){entityIndex=-1;renderEntity();return;}
     const edit=event.target.closest('[data-edit-index]');if(edit){entityIndex=Number(edit.dataset.editIndex);renderEntity();return;}
