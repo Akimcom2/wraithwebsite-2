@@ -44,7 +44,7 @@ module.exports = async function migrationBackup(req, res) {
         return fail(res, 400, 'Invalid blob path');
       }
       const offsetText = url.searchParams.get('offset') || '0';
-      if (!/^\\d+$/.test(offsetText)) return fail(res, 400, 'Invalid offset');
+      if (!/^[0-9]+$/.test(offsetText)) return fail(res, 400, 'Invalid offset');
       const offset = Number(offsetText);
       if (!Number.isSafeInteger(offset)) return fail(res, 400, 'Invalid offset');
 
