@@ -2,8 +2,23 @@ const {createHash, createHmac, randomUUID, timingSafeEqual} = require('node:cryp
 
 const STORAGE_PATH = 'chronicle/entries.json';
 const MAX_BODY_BYTES = 24000;
+const MAX_UPLOAD_BODY_BYTES = 4400000;
+const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 const MAX_PASSWORD_LENGTH = 512;
 const MAX_ENTRY_FIELD_LENGTH = 3000;
+const INITIAL_SESSION_MEMORIES = [
+  {title:'Последний приказ в туманных джунглях', url:'/assets/chronicle/session-01/01-last-order-jungle.webp'},
+  {title:'Аплодисменты после выступления', url:'/assets/chronicle/session-01/02-audience-applause.webp'},
+  {title:'Акакий и папка у двери', url:'/assets/chronicle/session-01/03-akakiy-folder.webp'},
+  {title:'Бриг у туманного острова', url:'/assets/chronicle/session-01/04-brig-fog-island.webp'},
+  {title:'Высадка в туманной островной бухте', url:'/assets/chronicle/session-01/05-landing-cove.webp'},
+  {title:'Майя и Илья на комедийном шоу', url:'/assets/chronicle/session-01/06-maya-ilya-comedy-show.webp'},
+  {title:'Мгновение невесомости над городскими огнями', url:'/assets/chronicle/session-01/07-moment-over-city-lights.webp'},
+  {title:'Ночной кабинет, телефон и пустой коридор', url:'/assets/chronicle/session-01/08-night-office.webp'},
+  {title:'После последнего поклона', url:'/assets/chronicle/session-01/09-after-final-bow.webp'},
+  {title:'Последний приказ капитана на островной тропе', url:'/assets/chronicle/session-01/10-captain-order-island-trail.webp'},
+  {title:'Тихая прогулка под огнями аттракционов', url:'/assets/chronicle/session-01/11-walk-under-ride-lights.webp'}
+];
 
 function sendJson(res, status, payload) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
@@ -88,6 +103,49 @@ function validDate(value) {
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : '';
 }
 
+function validatedMemories(value) {
+  if (value === undefined) return {value:[]};
+  if (!Array.isArray(value) || value.length > 20) return {error:'Добавь не больше 20 изображений воспоминаний.'};
+  const memories = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return {error:'Не удалось прочитать список воспоминаний.'};
+    const title = cleanSingleLine(item.title, 120);
+    const imageUrl = typeof item.url === 'string' ? item.url.trim() : '';
+    if (!title || imageUrl.length > 1000) return {error:'Проверь названия и адреса изображений.'};
+    const isSiteAsset = /^\/assets\/chronicle\/[A-Za-z0-9/_-]+\.(?:webp|png|jpe?g)$/i.test(imageUrl);
+    let isVercelBlob = false;
+    try {
+      const url = new URL(imageUrl);
+      isVercelBlob = url.protocol === 'https:' && url.hostname.endsWith('.public.blob.vercel-storage.com') && !url.username && !url.password;
+    } catch {}
+    if (!isSiteAsset && !isVercelBlob) return {error:'Адрес изображения не поддерживается.'};
+    memories.push({title, url:imageUrl});
+  }
+  return {value:memories};
+}
+
+async function uploadMemory(payload, res) {
+  if (payload.contentType !== 'image/webp' || typeof payload.data !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(payload.data)) {
+    return sendJson(res, 400, {error:'Не удалось прочитать изображение.'});
+  }
+  const image = Buffer.from(payload.data, 'base64');
+  if (!image.length || image.length > MAX_IMAGE_BYTES || image.toString('base64') !== payload.data) {
+    return sendJson(res, 413, {error:'Изображение слишком большое. Попробуйте файл меньшего размера.'});
+  }
+  try {
+    const {put} = await blobSdk();
+    const blob = await put('chronicle/memories/' + randomUUID() + '.webp', image, {
+      access:'public',
+      addRandomSuffix:false,
+      contentType:'image/webp',
+      cacheControlMaxAge:31536000
+    });
+    return sendJson(res, 201, {memory:{url:blob.url, pathname:blob.pathname}});
+  } catch {
+    return sendJson(res, 503, {error:'Не удалось загрузить изображение. Проверьте соединение и повторите попытку.'});
+  }
+}
+
 async function blobSdk() {
   return import('@vercel/blob');
 }
@@ -98,7 +156,14 @@ async function readEntries() {
   if (!blob) return [];
   const saved = await new Response(blob.stream).json();
   if (!saved || !Array.isArray(saved.entries)) throw new Error('Invalid Chronicle data');
-  return saved.entries;
+  let initialSessionAttached = false;
+  return saved.entries.map(entry => {
+    if (!initialSessionAttached && Number(entry && entry.sessionNumber) === 1 && entry && !Object.prototype.hasOwnProperty.call(entry, 'memories')) {
+      initialSessionAttached = true;
+      return {...entry, memories:INITIAL_SESSION_MEMORIES};
+    }
+    return entry;
+  });
 }
 
 async function writeEntries(entries) {
@@ -116,11 +181,13 @@ function validatedEntry(payload) {
   const chapter = Number(entry.chapter);
   const title = cleanSingleLine(entry.title, 100);
   const summary = cleanMultiline(entry.summary, MAX_ENTRY_FIELD_LENGTH);
+  const memories = validatedMemories(entry.memories);
   if (!Number.isInteger(chapter) || chapter < 1 || chapter > 9999) {
     return {error:'Укажи номер главы.'};
   }
   if (!title) return {error:'Укажи короткое название сессии.'};
   if (!summary) return {error:'Добавь краткий итог сессии.'};
+  if (memories.error) return {error:memories.error};
   const suppliedSession = Number(entry.sessionNumber);
   if (!Number.isInteger(suppliedSession) || suppliedSession < 1 || suppliedSession > 10000) {
     return {error:'Не удалось определить номер сессии.'};
@@ -137,6 +204,7 @@ function validatedEntry(payload) {
       newDetails:cleanMultiline(entry.newDetails, MAX_ENTRY_FIELD_LENGTH),
       questions:cleanMultiline(entry.questions, MAX_ENTRY_FIELD_LENGTH),
       ending:cleanMultiline(entry.ending, MAX_ENTRY_FIELD_LENGTH),
+      memories:memories.value,
       createdAt:new Date().toISOString()
     }
   };
@@ -158,9 +226,7 @@ module.exports = async function chronicle(req, res) {
 
   if (!validSameOrigin(req)) return sendJson(res, 403, {error:'Запрос отклонён.'});
   const contentLength = Number(req.headers && req.headers['content-length']);
-  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
-    return sendJson(res, 413, {error:'Запрос слишком большой.'});
-  }
+  if (Number.isFinite(contentLength) && contentLength > MAX_UPLOAD_BODY_BYTES) return sendJson(res, 413, {error:'Запрос слишком большой.'});
   const payload = parseBody(req.body);
 
   if (req.method === 'POST') {
@@ -171,6 +237,8 @@ module.exports = async function chronicle(req, res) {
     if (!hasValidMasterSession(req, secret)) {
       return sendJson(res, 401, {error:'Сессия мастера завершилась. Открой шаблон повторно.'});
     }
+    if (payload.action === 'upload-memory') return uploadMemory(payload, res);
+    if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) return sendJson(res, 413, {error:'Запись слишком большая.'});
     const validated = validatedEntry(payload.entry);
     if (validated.error) return sendJson(res, 400, {error:validated.error});
     try {
@@ -183,6 +251,7 @@ module.exports = async function chronicle(req, res) {
     }
   }
 
+  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) return sendJson(res, 413, {error:'Запрос слишком большой.'});
   const secret = typeof process.env.CHRONICLE_TEMPLATE_PASSWORD === 'string'
     ? process.env.CHRONICLE_TEMPLATE_PASSWORD
     : '';
@@ -207,3 +276,5 @@ module.exports = async function chronicle(req, res) {
     return sendJson(res, 503, {error:'Не удалось удалить запись. Проверьте подключение и повторите попытку.'});
   }
 };
+
+module.exports.config = {api:{bodyParser:{sizeLimit:'4.5mb'}}};

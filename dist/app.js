@@ -226,6 +226,11 @@
   const chronicleDraftOutput = $('#chronicleDraftOutput');
   const chronicleDraftStatus = $('#chronicleDraftStatus');
   const chronicleDraftSave = $('#chronicleDraftSave');
+  const chronicleMemoryInput = $('#chronicleDraftMemories');
+  const chronicleMemoryPreview = $('#chronicleMemoryPreview');
+  const chronicleMemoryCount = $('#chronicleMemoryCount');
+  let chronicleMemoryFiles = [];
+  let chronicleMemoryProcessing = false;
   const chronicleDraftInputIds = [
     'chronicleDraftChapter',
     'chronicleDraftName',
@@ -243,10 +248,14 @@
   function nextChronicleSessionNumber() {
     return chronicleEntries().reduce((max, entry) => Math.max(max, Number(entry.sessionNumber) || 0), 0) + 1;
   }
+  function renderMemoryGallery(memories) {
+    if (!Array.isArray(memories) || !memories.length) return '';
+    return `<div class="entry-section memories-section"><h3>Воспоминания <span class="memory-total">${memories.length}</span></h3><div class="memory-gallery">${memories.slice(0,20).map(memory => `<button class="memory-card" type="button" data-memory-title="${esc(memory.title)}" data-memory-url="${esc(memory.url)}" aria-label="Открыть журнал: ${esc(memory.title)}"><img src="${esc(memory.url)}" alt="${esc(memory.title)}" loading="lazy" decoding="async"><span>${esc(memory.title)}</span></button>`).join('')}</div></div>`;
+  }
   function renderChronicleEntry(entry, index) {
     const session = String(Number(entry.sessionNumber) || index + 1).padStart(2, '0');
     if (!entry.id) {
-      return `<article class="entry"><span class="eyebrow">${entry.chapter ? 'ГЛАВА ' + esc(entry.chapter) + ' · ' : ''}СЕССИЯ ${session}</span><h2>${esc(entry.title)}</h2><p>${esc(entry.text)}</p></article>`;
+      return `<article class="entry"><span class="eyebrow">${entry.chapter ? 'ГЛАВА ' + esc(entry.chapter) + ' · ' : ''}СЕССИЯ ${session}</span><h2>${esc(entry.title)}</h2><p>${esc(entry.text)}</p>${renderMemoryGallery(entry.memories)}</article>`;
     }
     const sections = [
       ['Что герои узнали или увидели', entry.known],
@@ -261,6 +270,7 @@
       <h2>${esc(entry.title)}</h2>
       <p class="entry-summary">${esc(entry.summary)}</p>
       ${sections.map(([title, value]) => `<div class="entry-section"><h3>${esc(title)}</h3><p>${esc(value)}</p></div>`).join('')}
+      ${renderMemoryGallery(entry.memories)}
     </article>`;
   }
   function renderChronicle() {
@@ -287,7 +297,95 @@
   loadSavedChronicle();
 
   let chronicleDraftIsCurrent = false;
+  function clearChronicleMemories() {
+    chronicleMemoryFiles.forEach(memory => URL.revokeObjectURL(memory.previewUrl));
+    chronicleMemoryFiles = [];
+    chronicleMemoryInput.value = '';
+    renderChronicleMemoryPreviews();
+  }
+  function renderChronicleMemoryPreviews() {
+    chronicleMemoryCount.textContent = `${chronicleMemoryFiles.length} из 20 журналов`;
+    chronicleMemoryPreview.innerHTML = chronicleMemoryFiles.map((memory,index) => `<figure class="chronicle-memory-preview-item"><button class="memory-remove" type="button" data-chronicle-memory-remove="${index}" aria-label="Убрать журнал: ${esc(memory.title)}" title="Убрать журнал">×</button><img src="${memory.previewUrl}" alt=""><figcaption>${esc(memory.title)}</figcaption></figure>`).join('');
+  }
+  function memoryTitleFromFile(file, index) {
+    const title = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0,120);
+    return !title || /^[a-f0-9-]{30,}$/i.test(title) ? `Журнал ${index + 1}` : title;
+  }
+  async function optimizeChronicleImage(file) {
+    if (!['image/png','image/jpeg','image/webp'].includes(file.type)) throw new Error('Выбери PNG, JPG или WebP.');
+    if (file.size > 20 * 1024 * 1024) throw new Error('Файл больше 20 МБ. Выбери изображение поменьше.');
+    let bitmap;
+    try { bitmap = await createImageBitmap(file); }
+    catch { throw new Error('Не удалось открыть один из файлов.'); }
+    const scale = Math.min(1, 2200 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    let result = null;
+    for (const quality of [.9,.84,.78,.7]) {
+      result = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', quality));
+      if (result && result.size <= 3 * 1024 * 1024) return result;
+    }
+    throw new Error('Не удалось ужать журнал до допустимого размера.');
+  }
+  function imageBlobToBase64(blob) {
+    return new Promise((resolve,reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Не удалось прочитать журнал.'));
+      reader.onload = () => {
+        const value = String(reader.result || '');
+        const comma = value.indexOf(',');
+        if (comma < 0) reject(new Error('Не удалось подготовить журнал к загрузке.'));
+        else resolve(value.slice(comma + 1));
+      };
+      reader.readAsDataURL(blob);
+    });
+  }
+  chronicleMemoryInput.addEventListener('change', async () => {
+    chronicleDraftIsCurrent = false;
+    chronicleDraftSave.disabled = true;
+    chronicleDraftOutput.value = '';
+    const files = [...chronicleMemoryInput.files];
+    clearChronicleMemories();
+    if (!files.length) {
+      chronicleDraftStatus.textContent = 'Журналы не выбраны. Можно сохранить запись без изображений.';
+      return;
+    }
+    if (files.length > 20) {
+      chronicleDraftStatus.textContent = 'Можно добавить не больше 20 журналов за одну сессию.';
+      return;
+    }
+    chronicleMemoryProcessing = true;
+    chronicleMemoryInput.disabled = true;
+    const prepared = [];
+    chronicleDraftStatus.textContent = `Подготавливаю ${files.length} изображений…`;
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const blob = await optimizeChronicleImage(files[i]);
+        prepared.push({title:memoryTitleFromFile(files[i],i), blob, previewUrl:URL.createObjectURL(blob), uploadedUrl:''});
+        chronicleMemoryFiles = prepared;
+        renderChronicleMemoryPreviews();
+        chronicleDraftStatus.textContent = `Подготовлено ${i + 1} из ${files.length} изображений…`;
+      }
+      chronicleDraftStatus.textContent = `${prepared.length} журналов готовы. Собери черновик перед сохранением.`;
+    } catch (error) {
+      prepared.forEach(memory => URL.revokeObjectURL(memory.previewUrl));
+      chronicleMemoryFiles = [];
+      renderChronicleMemoryPreviews();
+      chronicleMemoryInput.value = '';
+      chronicleDraftStatus.textContent = error.message || 'Не удалось подготовить изображения.';
+    } finally {
+      chronicleMemoryProcessing = false;
+      chronicleMemoryInput.disabled = false;
+    }
+  });
   function buildChronicleDraft() {
+    if (chronicleMemoryProcessing) {
+      chronicleDraftStatus.textContent = 'Подожди, пока изображения подготовятся.';
+      return false;
+    }
     if (!chronicleLoadComplete || chronicleLoadFailed) {
       chronicleDraftStatus.textContent = chronicleLoadFailed
         ? 'Не удалось загрузить Хронику. Обнови страницу и попробуй снова.'
@@ -327,6 +425,7 @@
     if (newDetails) lines.push('', '## Новые места и лица для архива', newDetails);
     if (questions) lines.push('', '## Открытые вопросы героев', questions);
     if (ending) lines.push('', '## Где остановились', ending);
+    if (chronicleMemoryFiles.length) lines.push('', '## Воспоминания', ...chronicleMemoryFiles.map(memory => '- ' + memory.title));
     chronicleDraftOutput.value = lines.join('\n');
     chronicleDraftIsCurrent = true;
     chronicleDraftSave.disabled = false;
@@ -371,11 +470,34 @@
       known:$('#chronicleDraftKnown').value.trim(),
       newDetails:$('#chronicleDraftNew').value.trim(),
       questions:$('#chronicleDraftQuestions').value.trim(),
-      ending:$('#chronicleDraftEnding').value.trim()
+      ending:$('#chronicleDraftEnding').value.trim(),
+      memories:[]
     };
     chronicleDraftSave.disabled = true;
-    chronicleDraftStatus.textContent = 'Сохраняю запись…';
+    chronicleMemoryInput.disabled = true;
+    $$('#chronicleMemoryPreview .memory-remove').forEach(button => { button.disabled = true; });
     try {
+      for (let i = 0; i < chronicleMemoryFiles.length; i++) {
+        const memory = chronicleMemoryFiles[i];
+        if (!memory.uploadedUrl) {
+          chronicleDraftStatus.textContent = `Загружаю журнал ${i + 1} из ${chronicleMemoryFiles.length}…`;
+          const data = await imageBlobToBase64(memory.blob);
+          const uploadResponse = await fetch('/api/chronicle', {
+            method:'POST',
+            cache:'no-store',
+            credentials:'same-origin',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({action:'upload-memory', contentType:'image/webp', data})
+          });
+          const uploadResult = await uploadResponse.json().catch(() => ({}));
+          if (!uploadResponse.ok || !uploadResult.memory || typeof uploadResult.memory.url !== 'string') {
+            throw new Error(uploadResult.error || 'Не удалось загрузить журнал.');
+          }
+          memory.uploadedUrl = uploadResult.memory.url;
+        }
+        entry.memories.push({title:memory.title, url:memory.uploadedUrl});
+      }
+      chronicleDraftStatus.textContent = 'Сохраняю запись…';
       const response = await fetch('/api/chronicle', {
         method:'POST',
         cache:'no-store',
@@ -390,6 +512,7 @@
       savedChronicleEntries = result.entries;
       renderChronicle();
       chronicleDraftInputIds.forEach(id => { $('#' + id).value = ''; });
+      clearChronicleMemories();
       chronicleDraftOutput.value = '';
       chronicleDraftIsCurrent = false;
       chronicleDraftStatus.textContent = 'Запись опубликована в Хронике.';
@@ -401,6 +524,9 @@
     } catch (error) {
       chronicleDraftSave.disabled = false;
       chronicleDraftStatus.textContent = error.message || 'Не удалось сохранить запись. Попробуй ещё раз.';
+    } finally {
+      chronicleMemoryInput.disabled = false;
+      $$('#chronicleMemoryPreview .memory-remove').forEach(button => { button.disabled = false; });
     }
   });
 
@@ -528,6 +654,8 @@
   document.addEventListener('click',e=>{
     const b=e.target.closest('button');if(!b)return;
     if(b.dataset.chronicleDelete){pendingChronicleDeleteId=b.dataset.chronicleDelete;openChroniclePasswordDialog('delete');return;}
+    if(b.dataset.chronicleMemoryRemove!==undefined){const index=Number(b.dataset.chronicleMemoryRemove);if(Number.isInteger(index)&&chronicleMemoryFiles[index]){URL.revokeObjectURL(chronicleMemoryFiles[index].previewUrl);chronicleMemoryFiles.splice(index,1);renderChronicleMemoryPreviews();chronicleDraftIsCurrent=false;chronicleDraftSave.disabled=true;chronicleDraftOutput.value='';chronicleDraftStatus.textContent='Список воспоминаний изменён. Собери черновик заново.';}return;}
+    if(b.dataset.memoryUrl){imageDialog(b.dataset.memoryTitle||'Воспоминание',b.dataset.memoryUrl);return;}
     if(b.dataset.close){$('#'+b.dataset.close).close();return;}
     if(b.dataset.character!==undefined){dossier(Number(b.dataset.character));return;}
     if(b.dataset.npcCharacter!==undefined){dossier(Number(b.dataset.npcCharacter),'npcs');return;}
