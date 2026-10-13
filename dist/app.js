@@ -248,14 +248,14 @@
   function nextChronicleSessionNumber() {
     return chronicleEntries().reduce((max, entry) => Math.max(max, Number(entry.sessionNumber) || 0), 0) + 1;
   }
-  function renderMemoryGallery(memories) {
+  function renderMemoryGallery(memories, entryId) {
     if (!Array.isArray(memories) || !memories.length) return '';
-    return `<div class="entry-section memories-section"><h3>Воспоминания <span class="memory-total">${memories.length}</span></h3><div class="memory-gallery">${memories.slice(0,20).map(memory => `<button class="memory-card" type="button" data-memory-title="${esc(memory.title)}" data-memory-url="${esc(memory.url)}" aria-label="Открыть журнал: ${esc(memory.title)}"><img src="${esc(memory.url)}" alt="${esc(memory.title)}" loading="lazy" decoding="async"><span>${esc(memory.title)}</span></button>`).join('')}</div></div>`;
+    return `<div class="entry-section memories-section"><h3>Воспоминания <span class="memory-total">${memories.length}</span></h3><div class="memory-gallery">${memories.slice(0,20).map(memory => `<div class="memory-card-wrap"><button class="memory-card" type="button" data-memory-title="${esc(memory.title)}" data-memory-url="${esc(memory.url)}" aria-label="Открыть журнал: ${esc(memory.title)}"><img src="${esc(memory.url)}" alt="${esc(memory.title)}" loading="lazy" decoding="async"><span>${esc(memory.title)}</span></button>${entryId ? `<button class="memory-delete" type="button" data-chronicle-memory-delete="${esc(memory.url)}" data-memory-title="${esc(memory.title)}" aria-label="Удалить журнал: ${esc(memory.title)}" title="Удалить журнал">×</button>` : ''}</div>`).join('')}</div></div>`;
   }
   function renderChronicleEntry(entry, index) {
     const session = String(Number(entry.sessionNumber) || index + 1).padStart(2, '0');
     if (!entry.id) {
-      return `<article class="entry"><span class="eyebrow">${entry.chapter ? 'ГЛАВА ' + esc(entry.chapter) + ' · ' : ''}СЕССИЯ ${session}</span><h2>${esc(entry.title)}</h2><p>${esc(entry.text)}</p>${renderMemoryGallery(entry.memories)}</article>`;
+      return `<article class="entry"><span class="eyebrow">${entry.chapter ? 'ГЛАВА ' + esc(entry.chapter) + ' · ' : ''}СЕССИЯ ${session}</span><h2>${esc(entry.title)}</h2><p>${esc(entry.text)}</p>${renderMemoryGallery(entry.memories,entry.id)}</article>`;
     }
     const sections = [
       ['Что герои узнали или увидели', entry.known],
@@ -270,7 +270,7 @@
       <h2>${esc(entry.title)}</h2>
       <p class="entry-summary">${esc(entry.summary)}</p>
       ${sections.map(([title, value]) => `<div class="entry-section"><h3>${esc(title)}</h3><p>${esc(value)}</p></div>`).join('')}
-      ${renderMemoryGallery(entry.memories)}
+      ${renderMemoryGallery(entry.memories,entry.id)}
     </article>`;
   }
   function renderChronicle() {
@@ -542,15 +542,22 @@
   let chroniclePasswordSubmitting = false;
   let chroniclePasswordMode = 'unlock';
   let pendingChronicleDeleteId = '';
+  let pendingChronicleMemoryDelete = null;
 
   function openChroniclePasswordDialog(mode, message) {
     chroniclePasswordMode = mode;
     chroniclePasswordForm.reset();
-    chroniclePasswordTitle.textContent = mode === 'delete' ? 'Удалить запись?' : 'Итоги сессии';
+    chroniclePasswordTitle.textContent = mode === 'delete'
+      ? 'Удалить запись?'
+      : mode === 'delete-memory' ? 'Удалить журнал?' : 'Итоги сессии';
     chroniclePasswordIntro.textContent = mode === 'delete'
       ? 'Введите пароль мастера, чтобы удалить эту запись из Хроники.'
-      : 'Введите пароль, чтобы открыть шаблон публикации.';
-    chroniclePasswordSubmit.textContent = mode === 'delete' ? 'Удалить запись' : 'Открыть шаблон';
+      : mode === 'delete-memory'
+        ? `Введите пароль мастера, чтобы удалить журнал «${pendingChronicleMemoryDelete?.title || 'Воспоминание'}» из Хроники.`
+        : 'Введите пароль, чтобы открыть шаблон публикации.';
+    chroniclePasswordSubmit.textContent = mode === 'delete'
+      ? 'Удалить запись'
+      : mode === 'delete-memory' ? 'Удалить журнал' : 'Открыть шаблон публикации';
     chroniclePasswordStatus.textContent = message || 'Введите пароль мастера.';
     chroniclePasswordDialog.showModal();
     chroniclePasswordInput.focus();
@@ -591,6 +598,35 @@
     chroniclePasswordStatus.textContent = 'Проверяю пароль…';
     try {
       const password = chroniclePasswordInput.value;
+      if (chroniclePasswordMode === 'delete-memory') {
+        if (!pendingChronicleMemoryDelete) throw new Error('Не удалось определить журнал.');
+        const response = await fetch('/api/chronicle', {
+          method:'DELETE',
+          cache:'no-store',
+          credentials:'same-origin',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            action:'delete-memory',
+            entryId:pendingChronicleMemoryDelete.entryId,
+            url:pendingChronicleMemoryDelete.url,
+            password
+          })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !Array.isArray(result.entries)) {
+          throw new Error(result.error || 'Не удалось удалить журнал.');
+        }
+        savedChronicleEntries = result.entries;
+        renderChronicle();
+        chroniclePasswordInput.value = '';
+        pendingChronicleMemoryDelete = null;
+        chroniclePasswordDialog.close();
+        toast(result.storageCleanupFailed
+          ? 'Журнал убран из Хроники, но файл остался в хранилище.'
+          : 'Журнал удалён из Воспоминаний.');
+        return;
+      }
+
       if (chroniclePasswordMode === 'delete') {
         const response = await fetch('/api/chronicle', {
           method:'DELETE',
@@ -642,6 +678,7 @@
   chroniclePasswordDialog.addEventListener('close', () => {
     chroniclePasswordInput.value = '';
     if (chroniclePasswordMode === 'delete') pendingChronicleDeleteId = '';
+    if (chroniclePasswordMode === 'delete-memory') pendingChronicleMemoryDelete = null;
     chroniclePasswordMode = 'unlock';
   });
 
@@ -653,6 +690,17 @@
   document.addEventListener('keydown',e=>{const tag=e.target.tagName;const typing=['INPUT','TEXTAREA','SELECT'].includes(tag)||e.target.isContentEditable;if((e.key==='/'&&!typing)||(e.key.toLowerCase()==='k'&&(e.ctrlKey||e.metaKey))){if($$('dialog[open]').length)return;e.preventDefault();openSearch();}});
   document.addEventListener('click',e=>{
     const b=e.target.closest('button');if(!b)return;
+    if(b.dataset.chronicleMemoryDelete!==undefined){
+      const entry=b.closest('[data-chronicle-entry]');
+      if(!entry)return;
+      pendingChronicleMemoryDelete={
+        entryId:entry.dataset.chronicleEntry,
+        url:b.dataset.chronicleMemoryDelete,
+        title:b.dataset.memoryTitle||'Воспоминание'
+      };
+      openChroniclePasswordDialog('delete-memory');
+      return;
+    }
     if(b.dataset.chronicleDelete){pendingChronicleDeleteId=b.dataset.chronicleDelete;openChroniclePasswordDialog('delete');return;}
     if(b.dataset.chronicleMemoryRemove!==undefined){const index=Number(b.dataset.chronicleMemoryRemove);if(Number.isInteger(index)&&chronicleMemoryFiles[index]){URL.revokeObjectURL(chronicleMemoryFiles[index].previewUrl);chronicleMemoryFiles.splice(index,1);renderChronicleMemoryPreviews();chronicleDraftIsCurrent=false;chronicleDraftSave.disabled=true;chronicleDraftOutput.value='';chronicleDraftStatus.textContent='Список воспоминаний изменён. Собери черновик заново.';}return;}
     if(b.dataset.memoryUrl){imageDialog(b.dataset.memoryTitle||'Воспоминание',b.dataset.memoryUrl);return;}

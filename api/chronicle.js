@@ -146,6 +146,18 @@ async function uploadMemory(payload, res) {
   }
 }
 
+function isUploadedMemoryUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' &&
+      url.hostname.endsWith('.public.blob.vercel-storage.com') &&
+      !url.username && !url.password &&
+      /^\/chronicle\/memories\/[a-f0-9-]+\.webp$/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
 async function blobSdk() {
   return import('@vercel/blob');
 }
@@ -256,6 +268,56 @@ module.exports = async function chronicle(req, res) {
     ? process.env.CHRONICLE_TEMPLATE_PASSWORD
     : '';
   if (!secret) return sendJson(res, 503, {error:'Доступ мастера пока не настроен.'});
+
+  if (payload.action === 'delete-memory') {
+    if (typeof payload.entryId !== 'string' || !/^[a-f0-9-]{36}$/i.test(payload.entryId)) {
+      return sendJson(res, 400, {error:'Не удалось определить запись.'});
+    }
+    const memoryUrl = typeof payload.url === 'string' ? payload.url.trim() : '';
+    if (!memoryUrl || memoryUrl.length > 1000) {
+      return sendJson(res, 400, {error:'Не удалось определить журнал.'});
+    }
+    if (typeof payload.password !== 'string' || payload.password.length === 0 || payload.password.length > MAX_PASSWORD_LENGTH) {
+      return sendJson(res, 400, {error:'Введите пароль мастера.'});
+    }
+    if (!equalSecrets(payload.password, secret)) {
+      return sendJson(res, 401, {error:'Пароль не подошёл.'});
+    }
+
+    try {
+      const entries = await readEntries();
+      const entryIndex = entries.findIndex(entry => entry && entry.id === payload.entryId);
+      if (entryIndex < 0) return sendJson(res, 404, {error:'Запись уже удалена или не найдена.'});
+      const entry = entries[entryIndex];
+      const memories = Array.isArray(entry.memories) ? entry.memories : [];
+      const memoryIndex = memories.findIndex(memory => memory && memory.url === memoryUrl);
+      if (memoryIndex < 0) return sendJson(res, 404, {error:'Журнал уже удалён или не найден.'});
+
+      const removedMemory = memories[memoryIndex];
+      const nextEntries = entries.map((current, index) => index === entryIndex
+        ? {...current, memories:memories.filter((_, itemIndex) => itemIndex !== memoryIndex)}
+        : current);
+      await writeEntries(nextEntries);
+
+      let storageCleanupFailed = false;
+      const stillReferenced = nextEntries.some(current =>
+        Array.isArray(current && current.memories) &&
+        current.memories.some(memory => memory && memory.url === removedMemory.url)
+      );
+      if (!stillReferenced && isUploadedMemoryUrl(removedMemory.url)) {
+        try {
+          const {del} = await blobSdk();
+          await del(new URL(removedMemory.url).pathname.slice(1));
+        } catch {
+          storageCleanupFailed = true;
+        }
+      }
+      return sendJson(res, 200, {entries:nextEntries, storageCleanupFailed});
+    } catch {
+      return sendJson(res, 503, {error:'Не удалось удалить журнал. Проверьте подключение и повторите попытку.'});
+    }
+  }
+
   if (typeof payload.id !== 'string' || !/^[a-f0-9-]{36}$/i.test(payload.id)) {
     return sendJson(res, 400, {error:'Не удалось определить запись.'});
   }
